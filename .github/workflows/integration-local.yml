@@ -1,10 +1,10 @@
-name: Integration Test
+name: Integration Local
 
 on:
   push:
 
 jobs:
-  integration:
+  integration-local:
     strategy:
       fail-fast: false
       matrix:
@@ -20,5 +20,5 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Run integration tests
-        run: go test ./integration -v
+      - name: Run integration-local tests
+        run: go test ./integration -run TestIntegrationLocal -v

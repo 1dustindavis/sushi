@@ -1,0 +1,56 @@
+name: Build Release
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build latest main
+        run: go build ./cmd/sushi
+
+      - name: Determine next version
+        id: next_version
+        run: |
+          latest_tag=$(git tag --list '[0-9]*.[0-9]*' --sort=-v:refname | head -n 1)
+          if [ -z "$latest_tag" ]; then
+            next_tag="1.0"
+          else
+            major="${latest_tag%%.*}"
+            minor="${latest_tag##*.}"
+            next_tag="${major}.$((minor + 1))"
+          fi
+
+          echo "next_tag=$next_tag" >> "$GITHUB_OUTPUT"
+
+      - name: Create and push tag
+        run: |
+          git tag "${{ steps.next_version.outputs.next_tag }}"
+          git push origin "${{ steps.next_version.outputs.next_tag }}"
+
+      - name: Create pre-release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.next_version.outputs.next_tag }}
+          name: ${{ steps.next_version.outputs.next_tag }}
+          prerelease: true
+          generate_release_notes: true
