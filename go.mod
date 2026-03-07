@@ -1,3 +1,3 @@
-module github.com/evanphx/sushi
+module sushi
 
 go 1.21

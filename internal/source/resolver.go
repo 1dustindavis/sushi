@@ -5,7 +5,7 @@ import (
 	"net/url"
 	"os"
 
-	"github.com/evanphx/sushi/internal/config"
+	"sushi/internal/config"
 )
 
 type Decision struct {

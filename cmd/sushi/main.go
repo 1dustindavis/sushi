@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/evanphx/sushi/internal/config"
-	"github.com/evanphx/sushi/internal/runtime"
-	"github.com/evanphx/sushi/internal/source"
+	"sushi/internal/config"
+	"sushi/internal/runtime"
+	"sushi/internal/source"
 )
 
 const defaultConfigPath = "./config.json"

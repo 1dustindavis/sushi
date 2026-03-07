@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/evanphx/sushi/internal/config"
+	"sushi/internal/config"
 )
 
 func TestResolvePrefersFirstUsableSource(t *testing.T) {
