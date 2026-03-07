@@ -7,11 +7,14 @@ import (
 	"os"
 
 	"sushi/internal/config"
+	"sushi/internal/logging"
 	"sushi/internal/runtime"
 	"sushi/internal/source"
 )
 
 const defaultConfigPath = "./config.json"
+
+var logger = logging.MustNewDefault(os.Stderr)
 
 func main() {
 	if len(os.Args) < 2 {
@@ -20,6 +23,7 @@ func main() {
 	}
 
 	command := os.Args[1]
+	logger.Info("command invoked", "command", command)
 	switch command {
 	case "run":
 		exitOnErr(run(os.Args[2:]))
@@ -52,6 +56,7 @@ func run(args []string) error {
 		return err
 	}
 
+	logger.Info("run plan resolved", "selected_mode", plan.Selected, "client_binary", client)
 	fmt.Printf("selected source: %s\n", plan.Selected)
 	fmt.Printf("client binary: %s\n", client)
 	fmt.Println("run command execution placeholder")
@@ -66,15 +71,19 @@ func doctor(args []string) error {
 
 	client, clientErr := runtime.DiscoverClientBinary(cfg.Runtime.ClientBinary)
 	if clientErr != nil {
+		logger.Warn("doctor client discovery failed", "error", clientErr)
 		fmt.Printf("client discovery: FAIL (%v)\n", clientErr)
 	} else {
+		logger.Info("doctor client discovery ok", "client_binary", client)
 		fmt.Printf("client discovery: OK (%s)\n", client)
 	}
 
 	plan, planErr := source.Resolve(cfg)
 	if planErr != nil {
+		logger.Warn("doctor source resolution failed", "error", planErr)
 		fmt.Printf("source resolution: FAIL (%v)\n", planErr)
 	} else {
+		logger.Info("doctor source resolution ok", "selected_mode", plan.Selected)
 		fmt.Printf("source resolution: OK (selected %s)\n", plan.Selected)
 	}
 
@@ -97,6 +106,7 @@ func printPlan(args []string) error {
 		return err
 	}
 
+	logger.Info("print-plan resolved", "selected_mode", plan.Selected, "decision_count", len(plan.Decisions))
 	fmt.Printf("selected source: %s\n", plan.Selected)
 	for _, decision := range plan.Decisions {
 		fmt.Printf("- %s: %s\n", decision.Source, decision.Reason)
@@ -126,6 +136,7 @@ func exitOnErr(err error) {
 	if err == nil {
 		return
 	}
+	logger.Error("command failed", "error", err)
 	fmt.Fprintf(os.Stderr, "error: %v\n", err)
 	os.Exit(1)
 }
