@@ -8,7 +8,7 @@ func validConfig() *Config {
 		SourceOrder: []string{"local", "remote"},
 		Sources: SourcesConfig{
 			Local: LocalSource{Enabled: true, CookbookPath: "/tmp"},
-			Remote: RemoteSource{Enabled: true, URL: "https://example.org/cookbooks.tar.zst", CacheDir: "/tmp/cache",
+			Remote: RemoteSource{Enabled: true, URL: "https://example.org/cookbooks.tar.zst", ChecksumURL: "https://example.org/cookbooks.sha256", CacheDir: "/tmp/cache",
 				RefreshInterval: "1h", MaxCacheAge: "24h"},
 		},
 	}
@@ -37,5 +37,35 @@ func TestValidateRequiresEnabledSourceInOrder(t *testing.T) {
 
 	if err := Validate(cfg); err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+func TestValidateRemoteHTTPRequiresAllowInsecure(t *testing.T) {
+	cfg := validConfig()
+	cfg.Sources.Remote.URL = "http://example.org/cookbooks.tar"
+
+	if err := Validate(cfg); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestValidateRemoteNoChecksumRequiresSkipChecksum(t *testing.T) {
+	cfg := validConfig()
+	cfg.Sources.Remote.ChecksumURL = ""
+
+	if err := Validate(cfg); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestValidateRemoteAllowsExplicitInsecureAndSkipChecksum(t *testing.T) {
+	cfg := validConfig()
+	cfg.Sources.Remote.URL = "http://example.org/cookbooks.tar"
+	cfg.Sources.Remote.ChecksumURL = ""
+	cfg.Sources.Remote.AllowInsecure = true
+	cfg.Sources.Remote.SkipChecksum = true
+
+	if err := Validate(cfg); err != nil {
+		t.Fatalf("expected config to validate, got %v", err)
 	}
 }

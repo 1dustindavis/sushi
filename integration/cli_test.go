@@ -26,9 +26,12 @@ type testConfig struct {
 			CookbookPath string `json:"cookbook_path"`
 		} `json:"local"`
 		Remote struct {
-			Enabled  bool   `json:"enabled"`
-			URL      string `json:"url"`
-			CacheDir string `json:"cache_dir"`
+			Enabled       bool   `json:"enabled"`
+			URL           string `json:"url"`
+			ChecksumURL   string `json:"checksum_url"`
+			AllowInsecure bool   `json:"allow_insecure"`
+			SkipChecksum  bool   `json:"skip_checksum"`
+			CacheDir      string `json:"cache_dir"`
 		} `json:"remote"`
 		ChefServer struct {
 			Enabled  bool   `json:"enabled"`
@@ -176,6 +179,8 @@ func writeRemoteConfig(t *testing.T, client, bundleURL, cacheDir string) string 
 	cfg.Sources.Local.Enabled = false
 	cfg.Sources.Remote.Enabled = true
 	cfg.Sources.Remote.URL = bundleURL
+	cfg.Sources.Remote.AllowInsecure = true
+	cfg.Sources.Remote.SkipChecksum = true
 	cfg.Sources.Remote.CacheDir = cacheDir
 	cfg.Sources.ChefServer.Enabled = false
 

@@ -53,7 +53,7 @@ func TestResolveFallsBackToRemoteWhenLocalUnavailable(t *testing.T) {
 		SourceOrder: []string{"local", "remote"},
 		Sources: config.SourcesConfig{
 			Local:  config.LocalSource{Enabled: true, CookbookPath: filepath.Join(tmp, "missing")},
-			Remote: config.RemoteSource{Enabled: true, URL: server.URL + "/cookbooks.tar", CacheDir: filepath.Join(tmp, "cache")},
+			Remote: config.RemoteSource{Enabled: true, URL: server.URL + "/cookbooks.tar", CacheDir: filepath.Join(tmp, "cache"), AllowInsecure: true, SkipChecksum: true},
 		},
 	}
 
@@ -86,7 +86,8 @@ func TestResolveRemoteUsesCachedFallbackWhenFetchFails(t *testing.T) {
 		Sources: config.SourcesConfig{
 			Remote: config.RemoteSource{
 				Enabled:             true,
-				URL:                 "http://127.0.0.1:1/unreachable.tar",
+				URL:                 "https://127.0.0.1:1/unreachable.tar",
+				SkipChecksum:        true,
 				CacheDir:            cacheDir,
 				RefreshInterval:     "0s",
 				MaxCacheAge:         "24h",
@@ -122,7 +123,8 @@ func TestResolveRemoteFailsWhenCacheIsStaleAndPolicyRequiresFresh(t *testing.T) 
 		Sources: config.SourcesConfig{
 			Remote: config.RemoteSource{
 				Enabled:             true,
-				URL:                 "http://127.0.0.1:1/unreachable.tar",
+				URL:                 "https://127.0.0.1:1/unreachable.tar",
+				SkipChecksum:        true,
 				CacheDir:            cacheDir,
 				RefreshInterval:     "0s",
 				MaxCacheAge:         "24h",

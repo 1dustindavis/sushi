@@ -3,7 +3,9 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -45,6 +47,8 @@ type RemoteSource struct {
 	Enabled             bool   `json:"enabled"`
 	URL                 string `json:"url"`
 	ChecksumURL         string `json:"checksum_url"`
+	AllowInsecure       bool   `json:"allow_insecure"`
+	SkipChecksum        bool   `json:"skip_checksum"`
 	RefreshInterval     string `json:"refresh_interval"`
 	CacheDir            string `json:"cache_dir"`
 	MaxCacheAge         string `json:"max_cache_age"`
@@ -117,6 +121,25 @@ func Validate(cfg *Config) error {
 				enabledInOrder++
 				if cfg.Sources.Remote.URL == "" {
 					return ValidationError{Field: "sources.remote.url", Message: "required when remote source is enabled"}
+				}
+				parsedURL, err := url.Parse(cfg.Sources.Remote.URL)
+				if err != nil || parsedURL.Scheme == "" || parsedURL.Host == "" {
+					return ValidationError{Field: "sources.remote.url", Message: "must be a valid absolute URL"}
+				}
+				if strings.EqualFold(parsedURL.Scheme, "http") && !cfg.Sources.Remote.AllowInsecure {
+					return ValidationError{Field: "sources.remote.allow_insecure", Message: "must be true when using an http source URL"}
+				}
+				if cfg.Sources.Remote.ChecksumURL == "" && !cfg.Sources.Remote.SkipChecksum {
+					return ValidationError{Field: "sources.remote.skip_checksum", Message: "must be true when checksum_url is not set"}
+				}
+				if cfg.Sources.Remote.ChecksumURL != "" {
+					parsedChecksumURL, err := url.Parse(cfg.Sources.Remote.ChecksumURL)
+					if err != nil || parsedChecksumURL.Scheme == "" || parsedChecksumURL.Host == "" {
+						return ValidationError{Field: "sources.remote.checksum_url", Message: "must be a valid absolute URL"}
+					}
+					if strings.EqualFold(parsedChecksumURL.Scheme, "http") && !cfg.Sources.Remote.AllowInsecure {
+						return ValidationError{Field: "sources.remote.allow_insecure", Message: "must be true when using an http checksum URL"}
+					}
 				}
 				if cfg.Sources.Remote.CacheDir == "" {
 					return ValidationError{Field: "sources.remote.cache_dir", Message: "required when remote source is enabled"}

@@ -16,6 +16,8 @@
       "enabled": true,
       "url": "https://example.org/cookbooks.tar.zst",
       "checksum_url": "https://example.org/cookbooks.sha256",
+      "allow_insecure": false,
+      "skip_checksum": false,
       "refresh_interval": "6h",
       "cache_dir": "/var/cache/sushi",
       "max_cache_age": "72h",
