@@ -1,0 +1,30 @@
+{
+  "runtime": {
+    "client_binary": "auto"
+  },
+  "source_order": ["local", "remote", "chef_server"],
+  "sources": {
+    "local": {
+      "enabled": true,
+      "cookbook_path": "/var/lib/sushi/cookbooks"
+    },
+    "remote": {
+      "enabled": true,
+      "url": "https://example.org/cookbooks.tar.zst",
+      "checksum_url": "https://example.org/cookbooks.sha256",
+      "refresh_interval": "6h",
+      "cache_dir": "/var/cache/sushi",
+      "max_cache_age": "72h",
+      "allow_cached_fallback": true,
+      "fail_if_stale": true
+    },
+    "chef_server": {
+      "enabled": false,
+      "client_rb": "/etc/chef/client.rb",
+      "healthcheck": {
+        "endpoint": "https://chef.example.com/organizations/acme",
+        "timeout": "2s"
+      }
+    }
+  }
+}
