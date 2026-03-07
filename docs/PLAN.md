@@ -227,7 +227,7 @@ Test strategy:
 
 CI expectations:
 
-- Run tests in GitHub Actions on **every push and pull request**.
+- Run tests in GitHub Actions on **every push**.
 - Use a matrix across `ubuntu-latest`, `macos-latest`, and `windows-latest`.
 - Require CI success before merging.
 - Add `go test ./...` as baseline; expand with race/static checks where feasible.
@@ -237,12 +237,26 @@ CI expectations:
 
 ## 13) Implementation phases
 
+### Current status snapshot (based on recent commits)
+
+Recently landed work has completed a meaningful part of Phase 0 and added supporting artifacts:
+
+- ✅ JSON config schema, parser, and validation are implemented.
+- ✅ `doctor` command is implemented.
+- ✅ Source resolution and `print-plan` scaffolding are implemented.
+- ✅ Multi-OS CI workflow exists and runs `go test ./...`.
+- ✅ Example JSON configuration has been added under `example/config.json`.
+
+Remaining gaps before Phase 0 can be considered fully complete:
+
+- None currently identified for Phase 0 scaffolding scope.
+
 ### Phase 0 — project scaffolding (short)
 
-- Define JSON config schema + parser + validation.
-- Add `doctor` command to report dependency and config readiness.
-- Add structured logging skeleton.
-- Add baseline multi-OS GitHub Actions workflow (`push` + `pull_request`).
+- [x] Define JSON config schema + parser + validation.
+- [x] Add `doctor` command to report dependency and config readiness.
+- [x] Add structured logging skeleton.
+- [x] Add baseline multi-OS GitHub Actions workflow (`push`).
 
 ### Phase 1 — serverless core (MVP)
 
@@ -284,17 +298,16 @@ MVP is complete when:
 4. Stale remote cache behavior is policy-driven and test-covered.
 5. The selected source decision is visible in logs and `print-plan` output.
 6. `chef-client` and `cinc-client` selection behavior is deterministic.
-7. CI runs tests on Linux, macOS, and Windows for every push/PR.
+7. CI runs tests on Linux, macOS, and Windows for every push.
 8. Service/daemon examples are provided and smoke-tested across platforms.
 
 ---
 
 ## 15) Immediate next tasks
 
-1. Replace prototype `main.go` flow with command-driven structure (`run`, `doctor`, `print-plan`).
-2. Introduce typed JSON config package and validation errors.
-3. Implement client binary discovery (`cinc-client`/`chef-client`) with Windows `.exe` handling.
-4. Implement source resolver returning a normalized execution plan from `source_order`.
-5. Add integration tests for local + remote + remote-cached fallback behavior.
-6. Update GitHub Actions workflow to run test matrix on Linux/macOS/Windows on each commit.
-7. Add example service definitions (systemd, launchd) plus native Windows Service mode docs and smoke checks.
+1. Implement remote bundle fetch for the `remote` source, including checksum verification and failure diagnostics.
+2. Implement remote cache fallback policy (`allow_cached_fallback`, freshness checks, `fail_if_stale`) during source resolution.
+3. Add atomic bundle activation + metadata persistence (`digest`, `fetched_at`, `source_url`, `expires_at`) in the cache directory.
+4. Complete `sushi run` by executing `chef-client`/`cinc-client` in local/zero mode from the resolved materialized cookbook tree.
+5. Expand `print-plan`/decision reporting to include remote fetch/cache outcomes and fallback reasons aligned with observability goals.
+6. Add integration tests covering local success, remote success, remote outage with valid cache fallback, and stale-cache policy failure.

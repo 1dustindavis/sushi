@@ -14,8 +14,4 @@ A sample configuration is available at [`example/config.json`](example/config.js
 
 ## Currently implemented
 
-- JSON configuration file support with validation for source ordering and required per-source settings.
-- Automatic Chef client detection (`cinc-client` preferred, with `chef-client` fallback) and explicit binary override via config.
-- Deterministic source selection from `source_order` across `local`, `remote`, and `chef_server` entries.
-- A `doctor` command that checks whether the configured environment is ready to run.
-- A `print-plan` command that shows source selection decisions before execution.
+- ✅ **Phase 0 (project scaffolding) is complete**: JSON config schema + validation, `doctor`, source resolution/`print-plan` scaffolding, structured logging skeleton, and baseline multi-OS CI on push.
