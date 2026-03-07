@@ -14,9 +14,10 @@ var knownSources = map[string]struct{}{
 }
 
 type Config struct {
-	Runtime     RuntimeConfig `json:"runtime"`
-	SourceOrder []string      `json:"source_order"`
-	Sources     SourcesConfig `json:"sources"`
+	Runtime     RuntimeConfig   `json:"runtime"`
+	SourceOrder []string        `json:"source_order"`
+	Sources     SourcesConfig   `json:"sources"`
+	Execution   ExecutionConfig `json:"execution"`
 }
 
 type RuntimeConfig struct {
@@ -27,6 +28,12 @@ type SourcesConfig struct {
 	Local      LocalSource      `json:"local"`
 	Remote     RemoteSource     `json:"remote"`
 	ChefServer ChefServerSource `json:"chef_server"`
+}
+
+type ExecutionConfig struct {
+	RunListFile        string `json:"run_list_file"`
+	JSONAttributesFile string `json:"json_attributes_file"`
+	LockFile           string `json:"lock_file"`
 }
 
 type LocalSource struct {

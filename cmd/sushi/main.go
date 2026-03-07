@@ -56,10 +56,20 @@ func run(args []string) error {
 		return err
 	}
 
-	logger.Info("run plan resolved", "selected_mode", plan.Selected, "client_binary", client)
+	logger.Info("run plan resolved", "selected_mode", plan.Selected, "client_binary", client, "cookbook_path", plan.SelectedCookbook, "bundle_digest", plan.BundleDigest)
 	fmt.Printf("selected source: %s\n", plan.Selected)
+	fmt.Printf("cookbook path: %s\n", plan.SelectedCookbook)
 	fmt.Printf("client binary: %s\n", client)
-	fmt.Println("run command execution placeholder")
+
+	err = runtime.ExecuteLocalMode(runtime.RunRequest{
+		ClientBinary:       client,
+		CookbookPath:       plan.SelectedCookbook,
+		RunListFile:        cfg.Execution.RunListFile,
+		JSONAttributesFile: cfg.Execution.JSONAttributesFile,
+	})
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -106,8 +116,12 @@ func printPlan(args []string) error {
 		return err
 	}
 
-	logger.Info("print-plan resolved", "selected_mode", plan.Selected, "decision_count", len(plan.Decisions))
+	logger.Info("print-plan resolved", "selected_mode", plan.Selected, "decision_count", len(plan.Decisions), "cookbook_path", plan.SelectedCookbook, "bundle_digest", plan.BundleDigest)
 	fmt.Printf("selected source: %s\n", plan.Selected)
+	fmt.Printf("cookbook path: %s\n", plan.SelectedCookbook)
+	if plan.BundleDigest != "" {
+		fmt.Printf("bundle digest: %s\n", plan.BundleDigest)
+	}
 	for _, decision := range plan.Decisions {
 		fmt.Printf("- %s: %s\n", decision.Source, decision.Reason)
 	}

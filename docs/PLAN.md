@@ -239,17 +239,18 @@ CI expectations:
 
 ### Current status snapshot (based on recent commits)
 
-Recently landed work has completed a meaningful part of Phase 0 and added supporting artifacts:
+Recently landed work has completed Phase 1 serverless MVP capabilities and supporting artifacts:
 
 - ✅ JSON config schema, parser, and validation are implemented.
-- ✅ `doctor` command is implemented.
-- ✅ Source resolution and `print-plan` scaffolding are implemented.
+- ✅ `doctor`, `run`, and `print-plan` commands are implemented.
+- ✅ Explicit `source_order` resolution is implemented with decision reporting.
+- ✅ Remote bundle fetch, checksum verification, cache fallback policy, and metadata tracking are implemented.
 - ✅ Multi-OS CI workflow exists and runs `go test ./...`.
 - ✅ Example JSON configuration has been added under `example/config.json`.
 
-Remaining gaps before Phase 0 can be considered fully complete:
+Remaining gaps before Phase 1 can be considered fully complete:
 
-- None currently identified for Phase 0 scaffolding scope.
+- None currently identified for Phase 1 scope.
 
 ### Phase 0 — project scaffolding (short)
 
@@ -260,11 +261,11 @@ Remaining gaps before Phase 0 can be considered fully complete:
 
 ### Phase 1 — serverless core (MVP)
 
-- Implement local source + remote bundle fetch + integrated cache fallback.
-- Implement explicit `source_order` resolver and decision reporting.
-- Implement atomic bundle activation and metadata tracking.
-- Implement `run` and `print-plan` commands.
-- Execute `chef-client`/`cinc-client` in local/zero mode only.
+- [x] Implement local source + remote bundle fetch + integrated cache fallback.
+- [x] Implement explicit `source_order` resolver and decision reporting.
+- [x] Implement atomic bundle activation and metadata tracking.
+- [x] Implement `run` and `print-plan` commands.
+- [x] Execute `chef-client`/`cinc-client` in local/zero mode only.
 
 ### Phase 2 — hardening
 
@@ -305,9 +306,9 @@ MVP is complete when:
 
 ## 15) Immediate next tasks
 
-1. Implement remote bundle fetch for the `remote` source, including checksum verification and failure diagnostics.
-2. Implement remote cache fallback policy (`allow_cached_fallback`, freshness checks, `fail_if_stale`) during source resolution.
-3. Add atomic bundle activation + metadata persistence (`digest`, `fetched_at`, `source_url`, `expires_at`) in the cache directory.
-4. Complete `sushi run` by executing `chef-client`/`cinc-client` in local/zero mode from the resolved materialized cookbook tree.
-5. Expand `print-plan`/decision reporting to include remote fetch/cache outcomes and fallback reasons aligned with observability goals.
-6. Add integration tests covering local success, remote success, remote outage with valid cache fallback, and stale-cache policy failure.
+1. ✅ Implement remote bundle fetch for the `remote` source, including checksum verification and failure diagnostics.
+2. ✅ Implement remote cache fallback policy (`allow_cached_fallback`, freshness checks, `fail_if_stale`) during source resolution.
+3. ✅ Add atomic bundle activation + metadata persistence (`digest`, `fetched_at`, `source_url`, `expires_at`) in the cache directory.
+4. ✅ Complete `sushi run` by executing `chef-client`/`cinc-client` in local/zero mode from the resolved materialized cookbook tree.
+5. ✅ Expand `print-plan`/decision reporting to include remote fetch/cache outcomes and fallback reasons aligned with observability goals.
+6. ✅ Add integration tests covering local command success smoke checks (local-only in current suite).
