@@ -6,6 +6,8 @@ For project direction and implementation planning, see [`docs/PLAN.md`](docs/PLA
 
 A sample configuration is available at [`example/config.json`](example/config.json).
 
+For remote sources, `allow_insecure` and `skip_checksum` are explicit safety toggles that default to `false`. `http` URLs require `allow_insecure: true`, and omitting `checksum_url` requires `skip_checksum: true`.
+
 ## Commands
 
 - `sushi run -config <path>`: resolves source order and executes converge flow.

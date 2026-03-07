@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -33,6 +34,10 @@ type cacheMetadata struct {
 }
 
 func ResolveRemote(src config.RemoteSource) (*RemoteResult, error) {
+	if err := validateRemoteSecurityPolicy(src); err != nil {
+		return nil, err
+	}
+
 	meta, bundlePath, _ := loadCurrentMetadata(src.CacheDir)
 
 	if meta != nil && !shouldRefresh(*meta, src.RefreshInterval) {
@@ -69,7 +74,34 @@ type fetchedRemote struct {
 	bundlePath string
 }
 
+func validateRemoteSecurityPolicy(src config.RemoteSource) error {
+	remoteURL, err := url.Parse(src.URL)
+	if err != nil || remoteURL.Scheme == "" || remoteURL.Host == "" {
+		return fmt.Errorf("invalid remote URL")
+	}
+	if strings.EqualFold(remoteURL.Scheme, "http") && !src.AllowInsecure {
+		return fmt.Errorf("insecure remote URL requires allow_insecure=true")
+	}
+	if src.ChecksumURL == "" && !src.SkipChecksum {
+		return fmt.Errorf("missing checksum_url requires skip_checksum=true")
+	}
+	if src.ChecksumURL != "" {
+		checksumURL, err := url.Parse(src.ChecksumURL)
+		if err != nil || checksumURL.Scheme == "" || checksumURL.Host == "" {
+			return fmt.Errorf("invalid checksum URL")
+		}
+		if strings.EqualFold(checksumURL.Scheme, "http") && !src.AllowInsecure {
+			return fmt.Errorf("insecure checksum URL requires allow_insecure=true")
+		}
+	}
+	return nil
+}
+
 func fetchAndActivateRemote(src config.RemoteSource) (*fetchedRemote, error) {
+	if err := validateRemoteSecurityPolicy(src); err != nil {
+		return nil, err
+	}
+
 	if err := os.MkdirAll(src.CacheDir, 0o755); err != nil {
 		return nil, fmt.Errorf("create cache dir: %w", err)
 	}
