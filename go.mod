@@ -1,3 +1,3 @@
-module cmd/sushi/main.go
+module github.com/evanphx/sushi
 
-go 1.16
+go 1.21
