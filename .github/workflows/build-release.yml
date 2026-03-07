@@ -1,23 +1,24 @@
 name: Build Release
 
 on:
-  pull_request:
-    types: [closed]
+  push:
     branches: [main]
+
+concurrency:
+  group: build-release-main
+  cancel-in-progress: true
 
 permissions:
   contents: write
 
 jobs:
   build-release:
-    if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout main
+      - name: Checkout pushed commit
         uses: actions/checkout@v4
         with:
-          ref: main
           fetch-depth: 0
 
       - name: Setup Go
@@ -25,8 +26,19 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Build latest main
-        run: go build ./cmd/sushi
+      - name: Build release artifacts
+        run: |
+          mkdir -p dist
+
+          for target in linux/amd64 darwin/amd64 darwin/arm64 windows/amd64; do
+            IFS='/' read -r goos goarch <<< "$target"
+            output="sushi-${goos}-${goarch}"
+            if [ "$goos" = "windows" ]; then
+              output="${output}.exe"
+            fi
+
+            GOOS="$goos" GOARCH="$goarch" CGO_ENABLED=0 go build -o "dist/${output}" ./cmd/sushi
+          done
 
       - name: Determine next version
         id: next_version
@@ -54,3 +66,5 @@ jobs:
           name: ${{ steps.next_version.outputs.next_tag }}
           prerelease: true
           generate_release_notes: true
+          files: |
+            dist/*
