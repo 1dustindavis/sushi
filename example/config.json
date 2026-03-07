@@ -2,7 +2,11 @@
   "runtime": {
     "client_binary": "auto"
   },
-  "source_order": ["local", "remote", "chef_server"],
+  "source_order": [
+    "local",
+    "remote",
+    "chef_server"
+  ],
   "sources": {
     "local": {
       "enabled": true,
@@ -26,5 +30,10 @@
         "timeout": "2s"
       }
     }
+  },
+  "execution": {
+    "run_list_file": "/etc/sushi/run-list.json",
+    "json_attributes_file": "/etc/sushi/attributes.json",
+    "lock_file": "/var/run/sushi.lock"
   }
 }

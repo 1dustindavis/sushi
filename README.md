@@ -14,4 +14,4 @@ A sample configuration is available at [`example/config.json`](example/config.js
 
 ## Currently implemented
 
-- ✅ **Phase 0 (project scaffolding) is complete**: JSON config schema + validation, `doctor`, source resolution/`print-plan` scaffolding, structured logging skeleton, and baseline multi-OS CI on push.
+- ✅ **Phase 1 (serverless core/MVP) implemented**: local + remote source resolution, remote bundle fetch with checksum validation, integrated cache fallback policy, atomic cache activation with metadata tracking, `run` execution in local/zero mode, and decision-rich `print-plan`.
