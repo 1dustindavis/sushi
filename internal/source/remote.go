@@ -14,6 +14,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/klauspost/compress/zstd"
+
 	"sushi/internal/config"
 )
 
@@ -163,13 +165,21 @@ func fetchExpectedChecksum(checksumURL string) (string, error) {
 
 func extractBundle(file *os.File, dst string, sourceURL string) error {
 	var reader io.Reader = file
-	if strings.HasSuffix(strings.ToLower(sourceURL), ".gz") || strings.HasSuffix(strings.ToLower(sourceURL), ".tgz") {
+	sourceURLLower := strings.ToLower(sourceURL)
+	if strings.HasSuffix(sourceURLLower, ".gz") || strings.HasSuffix(sourceURLLower, ".tgz") {
 		gz, err := gzip.NewReader(file)
 		if err != nil {
 			return fmt.Errorf("open gzip bundle: %w", err)
 		}
 		defer gz.Close()
 		reader = gz
+	} else if strings.HasSuffix(sourceURLLower, ".zst") || strings.HasSuffix(sourceURLLower, ".rst") {
+		zst, err := zstd.NewReader(file)
+		if err != nil {
+			return fmt.Errorf("open zstd bundle: %w", err)
+		}
+		defer zst.Close()
+		reader = zst
 	}
 
 	tr := tar.NewReader(reader)

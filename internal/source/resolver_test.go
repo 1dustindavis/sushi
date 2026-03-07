@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/klauspost/compress/zstd"
+
 	"sushi/internal/config"
 )
 
@@ -66,6 +68,33 @@ func TestResolveFallsBackToRemoteWhenLocalUnavailable(t *testing.T) {
 	}
 	if _, err := os.Stat(plan.SelectedCookbook); err != nil {
 		t.Fatalf("expected remote cookbook path to exist: %v", err)
+	}
+}
+
+func TestResolveRemoteSupportsTarRstBundle(t *testing.T) {
+	tmp := t.TempDir()
+	bundle := makeZstdTarBundle(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(bundle)
+	}))
+	defer server.Close()
+
+	cfg := &config.Config{
+		SourceOrder: []string{"remote"},
+		Sources: config.SourcesConfig{
+			Remote: config.RemoteSource{Enabled: true, URL: server.URL + "/cookbooks.tar.rst", CacheDir: filepath.Join(tmp, "cache")},
+		},
+	}
+
+	plan, err := Resolve(cfg)
+	if err != nil {
+		t.Fatalf("unexpected resolve error: %v", err)
+	}
+	if plan.Selected != "remote" {
+		t.Fatalf("expected remote source, got %s", plan.Selected)
+	}
+	if _, err := os.Stat(filepath.Join(plan.SelectedCookbook, "base", "metadata.rb")); err != nil {
+		t.Fatalf("expected extracted cookbook content: %v", err)
 	}
 }
 
@@ -185,6 +214,23 @@ func makeTarBundle(t *testing.T) []byte {
 	}
 	if err := tw.Close(); err != nil {
 		t.Fatalf("close tar writer: %v", err)
+	}
+	return buf.Bytes()
+}
+
+func makeZstdTarBundle(t *testing.T) []byte {
+	t.Helper()
+	tarBundle := makeTarBundle(t)
+	buf := bytes.NewBuffer(nil)
+	w, err := zstd.NewWriter(buf)
+	if err != nil {
+		t.Fatalf("create zstd writer: %v", err)
+	}
+	if _, err := w.Write(tarBundle); err != nil {
+		t.Fatalf("write zstd bundle: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("close zstd writer: %v", err)
 	}
 	return buf.Bytes()
 }
