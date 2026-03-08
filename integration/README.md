@@ -9,8 +9,9 @@ The integration suite validates both local and remote source behavior for core c
 - `sushi print-plan`
 - `sushi doctor`
 - `sushi run`
+- `sushi fetch`
 
-It verifies command output and confirms `run` invokes the configured client in local/zero mode with required flags.
+It verifies command output, confirms `run` invokes the configured client in local/zero mode with required flags, and validates operational exit-code behavior.
 
 ## Test layout
 
@@ -18,7 +19,11 @@ It verifies command output and confirms `run` invokes the configured client in l
   - `TestIntegration`: top-level suite with subtests for:
     - local-source smoke coverage
     - remote-source matrix coverage
+    - fetch and conditional-request behavior (`ETag`/`Last-Modified` + `304` metadata refresh)
+    - cache-validator edge cases (Last-Modified-only and validator-change re-fetch flow)
+    - exit-code coverage (including stale-cache policy violations)
     - lock-file behavior
+    - Windows service lifecycle behavior (`install`/`status`/`start`/`stop`/`uninstall`) with expected error-path assertions
 - `testdata/local-cookbooks/`: minimal cookbook tree used by local-source tests.
 - `testdata/fakeclient/`: tiny fake client binary used to capture invocation arguments.
 
@@ -45,7 +50,7 @@ Integration tests exercise both lock states:
 1. Build the fake client binary for the current OS.
 2. Generate temporary Sushi config files per test scenario.
 3. Execute CLI commands through `go run ./cmd/sushi ...`.
-4. Assert command output and captured fake-client arguments.
+4. Assert command output, exit codes, and captured fake-client arguments.
 
 ## Running locally
 
