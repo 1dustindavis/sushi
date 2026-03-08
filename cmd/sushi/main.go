@@ -69,6 +69,7 @@ func run(args []string) error {
 		CookbookPath:       plan.SelectedCookbook,
 		RunListFile:        cfg.Execution.RunListFile,
 		JSONAttributesFile: cfg.Execution.JSONAttributesFile,
+		LockFile:           cfg.Execution.LockFile,
 	})
 	if err != nil {
 		return err

@@ -4,7 +4,7 @@ VERSION ?= $(LAST_TAG)+$(SHORT_SHA)
 
 PLATFORMS := linux/amd64 darwin/amd64 darwin/arm64 windows/amd64
 
-.PHONY: build
+.PHONY: build test
 build:
 	@mkdir -p dist
 	@for target in $(PLATFORMS); do \
@@ -16,3 +16,6 @@ build:
 		GOOS=$$goos GOARCH=$$goarch CGO_ENABLED=0 \
 			go build -ldflags "-X main.version=$(VERSION)" -o "dist/$$output" ./cmd/sushi; \
 	done
+
+test:
+	go test -race -cover ./...

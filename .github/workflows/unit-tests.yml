@@ -1,10 +1,10 @@
-name: Integration Remote
+name: unit-tests
 
 on:
   push:
 
 jobs:
-  integration-remote:
+  unit:
     strategy:
       fail-fast: false
       matrix:
@@ -20,5 +20,5 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Run integration-remote tests
-        run: go test ./integration -run TestIntegrationRemote -v
+      - name: Test
+        run: go test -race -cover ./...
