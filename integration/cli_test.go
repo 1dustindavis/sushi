@@ -30,12 +30,12 @@ type testConfig struct {
 			CookbookPath string `json:"cookbook_path"`
 		} `json:"local"`
 		Remote struct {
-			Enabled       bool   `json:"enabled"`
-			URL           string `json:"url"`
-			ChecksumURL   string `json:"checksum_url"`
-			AllowInsecure bool   `json:"allow_insecure"`
-			SkipChecksum  bool   `json:"skip_checksum"`
-			CacheDir      string `json:"cache_dir"`
+			Enabled         bool   `json:"enabled"`
+			URL             string `json:"url"`
+			ChecksumURL     string `json:"checksum_url"`
+			AllowInsecure   bool   `json:"allow_insecure"`
+			RequireChecksum bool   `json:"require_checksum"`
+			CacheDir        string `json:"cache_dir"`
 		} `json:"remote"`
 		ChefServer struct {
 			Enabled  bool   `json:"enabled"`
@@ -70,7 +70,7 @@ func TestIntegration(t *testing.T) {
 			tc := tc
 			t.Run(tc.name, func(t *testing.T) {
 				cacheDir := filepath.Join(t.TempDir(), "cache")
-				cfgPath := writeRemoteConfig(t, fakeClient, tc.sourceURL, tc.checksumURL, cacheDir, tc.allowInsecure, tc.skipChecksum, "")
+				cfgPath := writeRemoteConfig(t, fakeClient, tc.sourceURL, tc.checksumURL, cacheDir, tc.allowInsecure, tc.requireChecksum, "")
 				for _, command := range []string{"print-plan", "doctor", "run"} {
 					out, err := runSushi(t, repoRoot, command, cfgPath, capturePath)
 					if tc.wantErr {
@@ -138,7 +138,7 @@ type remoteCase struct {
 	sourceURL       string
 	checksumURL     string
 	allowInsecure   bool
-	skipChecksum    bool
+	requireChecksum bool
 	wantErr         bool
 	wantErrContains string
 	wantSubstrs     []string
@@ -174,15 +174,15 @@ func remoteCases(t *testing.T) []remoteCase {
 	t.Cleanup(server.Close)
 
 	return []remoteCase{
-		{name: "good checksum", sourceURL: server.URL + "/bundle.tar.gz", checksumURL: server.URL + "/checksum.good", allowInsecure: true, skipChecksum: false, wantSubstrs: []string{"bundle digest:"}},
-		{name: "bad checksum", sourceURL: server.URL + "/bundle.tar.gz", checksumURL: server.URL + "/checksum.bad", allowInsecure: true, skipChecksum: false, wantErr: true, wantErrContains: "no usable source"},
-		{name: "good url", sourceURL: server.URL + "/bundle.tar.gz", checksumURL: "", allowInsecure: true, skipChecksum: true, wantSubstrs: nil},
-		{name: "bad url", sourceURL: "http://", checksumURL: "", allowInsecure: true, skipChecksum: true, wantErr: true, wantErrContains: "invalid config field \"sources.remote.url\""},
-		{name: "allow_insecure false blocks http", sourceURL: server.URL + "/bundle.tar.gz", checksumURL: "", allowInsecure: false, skipChecksum: true, wantErr: true, wantErrContains: "allow_insecure"},
-		{name: "skip_checksum false requires checksum", sourceURL: server.URL + "/bundle.tar.gz", checksumURL: "", allowInsecure: true, skipChecksum: false, wantErr: true, wantErrContains: "skip_checksum"},
-		{name: "supports tgz", sourceURL: server.URL + "/bundle.tgz", checksumURL: "", allowInsecure: true, skipChecksum: true, wantSubstrs: nil},
-		{name: "supports zst", sourceURL: server.URL + "/bundle.tar.zst", checksumURL: "", allowInsecure: true, skipChecksum: true, wantSubstrs: nil},
-		{name: "supports rst", sourceURL: server.URL + "/bundle.tar.rst", checksumURL: "", allowInsecure: true, skipChecksum: true, wantSubstrs: nil},
+		{name: "good checksum", sourceURL: server.URL + "/bundle.tar.gz", checksumURL: server.URL + "/checksum.good", allowInsecure: true, requireChecksum: true, wantSubstrs: []string{"bundle digest:"}},
+		{name: "bad checksum", sourceURL: server.URL + "/bundle.tar.gz", checksumURL: server.URL + "/checksum.bad", allowInsecure: true, requireChecksum: true, wantErr: true, wantErrContains: "no usable source"},
+		{name: "good url", sourceURL: server.URL + "/bundle.tar.gz", checksumURL: "", allowInsecure: true, requireChecksum: false, wantSubstrs: nil},
+		{name: "bad url", sourceURL: "http://", checksumURL: "", allowInsecure: true, requireChecksum: false, wantErr: true, wantErrContains: "invalid config field \"sources.remote.url\""},
+		{name: "allow_insecure false blocks http", sourceURL: server.URL + "/bundle.tar.gz", checksumURL: "", allowInsecure: false, requireChecksum: false, wantErr: true, wantErrContains: "allow_insecure"},
+		{name: "require_checksum true requires checksum", sourceURL: server.URL + "/bundle.tar.gz", checksumURL: "", allowInsecure: true, requireChecksum: true, wantErr: true, wantErrContains: "required when require_checksum is true"},
+		{name: "supports tgz", sourceURL: server.URL + "/bundle.tgz", checksumURL: "", allowInsecure: true, requireChecksum: false, wantSubstrs: nil},
+		{name: "supports zst", sourceURL: server.URL + "/bundle.tar.zst", checksumURL: "", allowInsecure: true, requireChecksum: false, wantSubstrs: nil},
+		{name: "supports rst", sourceURL: server.URL + "/bundle.tar.rst", checksumURL: "", allowInsecure: true, requireChecksum: false, wantSubstrs: nil},
 	}
 }
 
@@ -239,7 +239,7 @@ func writeLocalConfigWithLock(t *testing.T, client, lockPath string) string {
 	return writeConfig(t, cfg)
 }
 
-func writeRemoteConfig(t *testing.T, client, bundleURL, checksumURL, cacheDir string, allowInsecure, skipChecksum bool, lockPath string) string {
+func writeRemoteConfig(t *testing.T, client, bundleURL, checksumURL, cacheDir string, allowInsecure, requireChecksum bool, lockPath string) string {
 	t.Helper()
 
 	cfg := testConfig{}
@@ -250,7 +250,7 @@ func writeRemoteConfig(t *testing.T, client, bundleURL, checksumURL, cacheDir st
 	cfg.Sources.Remote.URL = bundleURL
 	cfg.Sources.Remote.ChecksumURL = checksumURL
 	cfg.Sources.Remote.AllowInsecure = allowInsecure
-	cfg.Sources.Remote.SkipChecksum = skipChecksum
+	cfg.Sources.Remote.RequireChecksum = requireChecksum
 	cfg.Sources.Remote.CacheDir = cacheDir
 	cfg.Sources.ChefServer.Enabled = false
 	cfg.Execution.LockFile = lockPath

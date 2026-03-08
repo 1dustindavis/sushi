@@ -6,8 +6,6 @@ For project direction and implementation planning, see [`docs/PLAN.md`](docs/PLA
 
 A sample configuration is available at [`example/config.json`](example/config.json).
 
-For remote sources, `allow_insecure` and `skip_checksum` are explicit safety toggles that default to `false`. `http` URLs require `allow_insecure: true`, and omitting `checksum_url` requires `skip_checksum: true`.
-
 ## Commands
 
 - `sushi run -config <path>`: resolves source order and executes converge flow.
@@ -18,4 +16,5 @@ For remote sources, `allow_insecure` and `skip_checksum` are explicit safety tog
 
 ## Currently implemented
 
-- ✅ **Phase 1 (serverless core/MVP) implemented**: local + remote source resolution, remote bundle fetch with checksum validation, integrated cache fallback policy, atomic cache activation with metadata tracking, `run` execution in local/zero mode, and decision-rich `print-plan`.
+- ✅ **Phase 1 (serverless core/MVP) implemented**: local + remote source resolution, remote bundle fetch, integrated cache fallback policy, atomic cache activation with metadata tracking, `run` execution in local/zero mode, and decision-rich `print-plan`.
+- ✅ **Phase 2 (hardening) implemented**: lock/timeout controls, retry/backoff, stronger remote integrity + stale-cache policy controls, and expanded unit test coverage.

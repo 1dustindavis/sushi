@@ -49,21 +49,34 @@ func TestValidateRemoteHTTPRequiresAllowInsecure(t *testing.T) {
 	}
 }
 
-func TestValidateRemoteNoChecksumRequiresSkipChecksum(t *testing.T) {
+func TestValidateRemoteChecksumRequiredNeedsURL(t *testing.T) {
 	cfg := validConfig()
 	cfg.Sources.Remote.ChecksumURL = ""
+	cfg.Sources.Remote.RequireChecksum = true
 
 	if err := Validate(cfg); err == nil {
 		t.Fatal("expected error")
 	}
 }
 
-func TestValidateRemoteAllowsExplicitInsecureAndSkipChecksum(t *testing.T) {
+func TestValidateRemoteAllowsExplicitInsecureAndOptionalChecksum(t *testing.T) {
 	cfg := validConfig()
 	cfg.Sources.Remote.URL = "http://example.org/cookbooks.tar"
 	cfg.Sources.Remote.ChecksumURL = ""
 	cfg.Sources.Remote.AllowInsecure = true
-	cfg.Sources.Remote.SkipChecksum = true
+	cfg.Sources.Remote.RequireChecksum = false
+
+	if err := Validate(cfg); err != nil {
+		t.Fatalf("expected config to validate, got %v", err)
+	}
+}
+
+func TestValidateExecutionDurations(t *testing.T) {
+	cfg := validConfig()
+	cfg.Execution.LockWaitTimeout = "5s"
+	cfg.Execution.LockPollInterval = "250ms"
+	cfg.Execution.LockStaleAge = "1h"
+	cfg.Execution.ConvergeTimeout = "30m"
 
 	if err := Validate(cfg); err != nil {
 		t.Fatalf("expected config to validate, got %v", err)

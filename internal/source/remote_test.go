@@ -10,7 +10,9 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/klauspost/compress/zstd"
 
@@ -25,9 +27,9 @@ func TestValidateRemoteSecurityPolicy(t *testing.T) {
 	}{
 		{name: "good https with checksum", src: config.RemoteSource{URL: "https://example.org/cookbooks.tar", ChecksumURL: "https://example.org/cookbooks.sha256"}},
 		{name: "bad source url", src: config.RemoteSource{URL: "://bad"}, wantError: "invalid remote URL"},
-		{name: "bad checksum url", src: config.RemoteSource{URL: "https://example.org/cookbooks.tar", ChecksumURL: "://bad", SkipChecksum: false}, wantError: "invalid checksum URL"},
-		{name: "http source requires allow_insecure", src: config.RemoteSource{URL: "http://example.org/cookbooks.tar", SkipChecksum: true}, wantError: "allow_insecure"},
-		{name: "skip_checksum false needs checksum", src: config.RemoteSource{URL: "https://example.org/cookbooks.tar", SkipChecksum: false}, wantError: "skip_checksum"},
+		{name: "bad checksum url", src: config.RemoteSource{URL: "https://example.org/cookbooks.tar", ChecksumURL: "://bad", RequireChecksum: false}, wantError: "invalid checksum URL"},
+		{name: "http source requires allow_insecure", src: config.RemoteSource{URL: "http://example.org/cookbooks.tar"}, wantError: "allow_insecure"},
+		{name: "require_checksum needs checksum", src: config.RemoteSource{URL: "https://example.org/cookbooks.tar", RequireChecksum: true}, wantError: "require_checksum"},
 	}
 
 	for _, tc := range tests {
@@ -90,7 +92,7 @@ func TestFetchAndActivateRemoteChecksumAndCompression(t *testing.T) {
 	for _, path := range []string{"/bundle.tgz", "/bundle.tar.zst", "/bundle.tar.rst"} {
 		path := path
 		t.Run("supports "+path, func(t *testing.T) {
-			src := config.RemoteSource{URL: server.URL + path, AllowInsecure: true, SkipChecksum: true, CacheDir: filepath.Join(t.TempDir(), "cache")}
+			src := config.RemoteSource{URL: server.URL + path, AllowInsecure: true, CacheDir: filepath.Join(t.TempDir(), "cache")}
 			got, err := fetchAndActivateRemote(src)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
@@ -99,6 +101,37 @@ func TestFetchAndActivateRemoteChecksumAndCompression(t *testing.T) {
 				t.Fatal("expected bundle path")
 			}
 		})
+	}
+}
+
+func TestFetchAndActivateRemoteRetries(t *testing.T) {
+	baseTar := makeRemoteTar(t)
+	gzipBundle := compressGzip(t, baseTar)
+	var attempts int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/bundle.tar.gz" {
+			http.NotFound(w, r)
+			return
+		}
+		if atomic.AddInt32(&attempts, 1) < 3 {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		_, _ = w.Write(gzipBundle)
+	}))
+	defer server.Close()
+
+	src := config.RemoteSource{URL: server.URL + "/bundle.tar.gz", AllowInsecure: true, CacheDir: filepath.Join(t.TempDir(), "cache"), FetchRetries: 2, RetryBackoff: "1ms"}
+	if _, err := fetchAndActivateRemote(src); err != nil {
+		t.Fatalf("expected retries to recover, got %v", err)
+	}
+}
+
+func TestStaleWarning(t *testing.T) {
+	meta := cacheMetadata{ExpiresAt: time.Now().Add(20 * time.Minute)}
+	warn := staleWarning(meta, "30m")
+	if warn == "" {
+		t.Fatal("expected warning")
 	}
 }
 

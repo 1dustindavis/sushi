@@ -17,10 +17,14 @@
       "url": "https://example.org/cookbooks.tar.zst",
       "checksum_url": "https://example.org/cookbooks.sha256",
       "allow_insecure": false,
-      "skip_checksum": false,
+      "require_checksum": false,
       "refresh_interval": "6h",
+      "request_timeout": "20s",
+      "fetch_retries": 2,
+      "retry_backoff": "1s",
       "cache_dir": "/var/cache/sushi",
       "max_cache_age": "72h",
+      "stale_warning_window": "6h",
       "allow_cached_fallback": true,
       "fail_if_stale": true
     },
@@ -36,6 +40,10 @@
   "execution": {
     "run_list_file": "/etc/sushi/run-list.json",
     "json_attributes_file": "/etc/sushi/attributes.json",
-    "lock_file": "/var/run/sushi.lock"
+    "lock_file": "/var/run/sushi.lock",
+    "lock_wait_timeout": "30s",
+    "lock_poll_interval": "250ms",
+    "lock_stale_age": "6h",
+    "converge_timeout": "30m"
   }
 }

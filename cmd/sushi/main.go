@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"time"
 
 	"sushi/internal/config"
 	"sushi/internal/logging"
@@ -64,12 +65,33 @@ func run(args []string) error {
 	fmt.Printf("cookbook path: %s\n", plan.SelectedCookbook)
 	fmt.Printf("client binary: %s\n", client)
 
+	lockWaitTimeout, err := parseOptionalDuration(cfg.Execution.LockWaitTimeout)
+	if err != nil {
+		return fmt.Errorf("parse execution.lock_wait_timeout: %w", err)
+	}
+	lockPollInterval, err := parseOptionalDuration(cfg.Execution.LockPollInterval)
+	if err != nil {
+		return fmt.Errorf("parse execution.lock_poll_interval: %w", err)
+	}
+	lockStaleAge, err := parseOptionalDuration(cfg.Execution.LockStaleAge)
+	if err != nil {
+		return fmt.Errorf("parse execution.lock_stale_age: %w", err)
+	}
+	convergeTimeout, err := parseOptionalDuration(cfg.Execution.ConvergeTimeout)
+	if err != nil {
+		return fmt.Errorf("parse execution.converge_timeout: %w", err)
+	}
+
 	err = runtime.ExecuteLocalMode(runtime.RunRequest{
 		ClientBinary:       client,
 		CookbookPath:       plan.SelectedCookbook,
 		RunListFile:        cfg.Execution.RunListFile,
 		JSONAttributesFile: cfg.Execution.JSONAttributesFile,
 		LockFile:           cfg.Execution.LockFile,
+		LockWaitTimeout:    lockWaitTimeout,
+		LockPollInterval:   lockPollInterval,
+		LockStaleAge:       lockStaleAge,
+		ConvergeTimeout:    convergeTimeout,
 	})
 	if err != nil {
 		return err
@@ -148,6 +170,13 @@ func loadConfig(args []string) (*config.Config, error) {
 		return nil, err
 	}
 	return cfg, nil
+}
+
+func parseOptionalDuration(value string) (time.Duration, error) {
+	if value == "" {
+		return 0, nil
+	}
+	return time.ParseDuration(value)
 }
 
 func exitOnErr(err error) {

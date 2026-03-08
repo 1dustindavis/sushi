@@ -36,6 +36,10 @@ type ExecutionConfig struct {
 	RunListFile        string `json:"run_list_file"`
 	JSONAttributesFile string `json:"json_attributes_file"`
 	LockFile           string `json:"lock_file"`
+	LockWaitTimeout    string `json:"lock_wait_timeout"`
+	LockPollInterval   string `json:"lock_poll_interval"`
+	LockStaleAge       string `json:"lock_stale_age"`
+	ConvergeTimeout    string `json:"converge_timeout"`
 }
 
 type LocalSource struct {
@@ -48,10 +52,14 @@ type RemoteSource struct {
 	URL                 string `json:"url"`
 	ChecksumURL         string `json:"checksum_url"`
 	AllowInsecure       bool   `json:"allow_insecure"`
-	SkipChecksum        bool   `json:"skip_checksum"`
+	RequireChecksum     bool   `json:"require_checksum"`
 	RefreshInterval     string `json:"refresh_interval"`
+	RequestTimeout      string `json:"request_timeout"`
+	FetchRetries        int    `json:"fetch_retries"`
+	RetryBackoff        string `json:"retry_backoff"`
 	CacheDir            string `json:"cache_dir"`
 	MaxCacheAge         string `json:"max_cache_age"`
+	StaleWarningWindow  string `json:"stale_warning_window"`
 	AllowCachedFallback bool   `json:"allow_cached_fallback"`
 	FailIfStale         bool   `json:"fail_if_stale"`
 }
@@ -129,8 +137,8 @@ func Validate(cfg *Config) error {
 				if strings.EqualFold(parsedURL.Scheme, "http") && !cfg.Sources.Remote.AllowInsecure {
 					return ValidationError{Field: "sources.remote.allow_insecure", Message: "must be true when using an http source URL"}
 				}
-				if cfg.Sources.Remote.ChecksumURL == "" && !cfg.Sources.Remote.SkipChecksum {
-					return ValidationError{Field: "sources.remote.skip_checksum", Message: "must be true when checksum_url is not set"}
+				if cfg.Sources.Remote.RequireChecksum && cfg.Sources.Remote.ChecksumURL == "" {
+					return ValidationError{Field: "sources.remote.checksum_url", Message: "required when require_checksum is true"}
 				}
 				if cfg.Sources.Remote.ChecksumURL != "" {
 					parsedChecksumURL, err := url.Parse(cfg.Sources.Remote.ChecksumURL)
@@ -154,6 +162,24 @@ func Validate(cfg *Config) error {
 						return ValidationError{Field: "sources.remote.max_cache_age", Message: "must be a valid duration"}
 					}
 				}
+				if cfg.Sources.Remote.RequestTimeout != "" {
+					if _, err := time.ParseDuration(cfg.Sources.Remote.RequestTimeout); err != nil {
+						return ValidationError{Field: "sources.remote.request_timeout", Message: "must be a valid duration"}
+					}
+				}
+				if cfg.Sources.Remote.FetchRetries < 0 {
+					return ValidationError{Field: "sources.remote.fetch_retries", Message: "must be >= 0"}
+				}
+				if cfg.Sources.Remote.RetryBackoff != "" {
+					if _, err := time.ParseDuration(cfg.Sources.Remote.RetryBackoff); err != nil {
+						return ValidationError{Field: "sources.remote.retry_backoff", Message: "must be a valid duration"}
+					}
+				}
+				if cfg.Sources.Remote.StaleWarningWindow != "" {
+					if _, err := time.ParseDuration(cfg.Sources.Remote.StaleWarningWindow); err != nil {
+						return ValidationError{Field: "sources.remote.stale_warning_window", Message: "must be a valid duration"}
+					}
+				}
 			}
 		case "chef_server":
 			if cfg.Sources.ChefServer.Enabled {
@@ -170,6 +196,27 @@ func Validate(cfg *Config) error {
 	}
 	if enabledInOrder == 0 {
 		return ValidationError{Field: "source_order", Message: "must reference at least one enabled source"}
+	}
+
+	if cfg.Execution.LockWaitTimeout != "" {
+		if _, err := time.ParseDuration(cfg.Execution.LockWaitTimeout); err != nil {
+			return ValidationError{Field: "execution.lock_wait_timeout", Message: "must be a valid duration"}
+		}
+	}
+	if cfg.Execution.LockPollInterval != "" {
+		if _, err := time.ParseDuration(cfg.Execution.LockPollInterval); err != nil {
+			return ValidationError{Field: "execution.lock_poll_interval", Message: "must be a valid duration"}
+		}
+	}
+	if cfg.Execution.LockStaleAge != "" {
+		if _, err := time.ParseDuration(cfg.Execution.LockStaleAge); err != nil {
+			return ValidationError{Field: "execution.lock_stale_age", Message: "must be a valid duration"}
+		}
+	}
+	if cfg.Execution.ConvergeTimeout != "" {
+		if _, err := time.ParseDuration(cfg.Execution.ConvergeTimeout); err != nil {
+			return ValidationError{Field: "execution.converge_timeout", Message: "must be a valid duration"}
+		}
 	}
 
 	return nil
