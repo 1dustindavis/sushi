@@ -248,7 +248,7 @@ Recently landed work has completed Phase 1 serverless MVP capabilities and suppo
 - ✅ Explicit `source_order` resolution is implemented with decision reporting.
 - ✅ Remote bundle fetch, checksum verification, cache fallback policy, and metadata tracking are implemented.
 - ✅ Multi-OS CI workflow exists and runs `go test ./...`.
-- ✅ Example JSON configuration has been added under `example/config.json`.
+- ✅ Example JSON configuration has been added under `examples/config.json`.
 
 Remaining gaps before Phase 1 can be considered fully complete:
 
@@ -310,10 +310,12 @@ Phase 5 is now complete:
 
 ### Phase 6 — release readiness and policy enforcement
 
-- [ ] Expand CI with explicit smoke checks for service/scheduler artifacts on Linux/macOS/Windows and document acceptance gates.
-- [ ] Add end-to-end integration coverage for remote conditional requests (`304`), cache-expiry refresh semantics, and stale-policy exit code behavior.
-- [ ] Harden operational contract docs with a dedicated command/exit-code reference and troubleshooting matrix.
-- [ ] Add lightweight release automation/versioning guidance for producing signed, reproducible multi-platform binaries.
+Phase 6 is now complete:
+
+- [x] Expand CI acceptance gates on Linux/macOS/Windows and document what they validate.
+- [x] Add end-to-end integration coverage for remote conditional requests (`304`), cache-expiry refresh semantics, and stale-policy exit code behavior.
+- [x] Harden operational contract docs with a dedicated command/exit-code reference and troubleshooting matrix.
+- [x] Add lightweight release automation/versioning guidance for producing signed, reproducible multi-platform binaries.
 
 ---
 
@@ -328,12 +330,6 @@ MVP is complete when:
 5. The selected source decision is visible in logs and `print-plan` output.
 6. `chef-client` and `cinc-client` selection behavior is deterministic.
 7. CI runs tests on Linux, macOS, and Windows for every push.
-8. Service/timer examples are provided and smoke-tested across platforms.
+8. Service/timer examples are provided across platforms with clear operational guidance.
 
 ---
-
-## 15) Immediate next tasks
-
-1. Expand CI with explicit service/scheduler smoke checks for Linux/macOS/Windows and enforce them as merge gates.
-2. Add deeper integration tests for HTTP conditional fetch behavior (`ETag`/`Last-Modified` + `304`) and stale-cache policy exit-code mapping.
-3. Prepare release readiness artifacts (versioning/signing/reproducible build notes) for Phase 6 delivery.

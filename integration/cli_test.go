@@ -16,7 +16,9 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/klauspost/compress/zstd"
 )
@@ -56,6 +58,14 @@ type testConfig struct {
 		RunListFile string `json:"run_list_file"`
 		LockFile    string `json:"lock_file"`
 	} `json:"execution"`
+}
+
+type cacheMetadata struct {
+	Digest    string    `json:"digest"`
+	FetchedAt time.Time `json:"fetched_at"`
+	SourceURL string    `json:"source_url"`
+	ExpiresAt time.Time `json:"expires_at"`
+	ETag      string    `json:"etag"`
 }
 
 func TestIntegration(t *testing.T) {
@@ -158,6 +168,160 @@ func TestIntegration(t *testing.T) {
 		}
 	})
 
+	t.Run("fetch command refreshes metadata on HTTP 304", func(t *testing.T) {
+		bundle := buildRemoteBundleGzip(t)
+		checksum := sha256Hex(bundle)
+		cacheDir := filepath.Join(t.TempDir(), "cache")
+
+		var ifNoneMatch string
+		var requests int32
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/bundle.tar.gz":
+				ifNoneMatch = r.Header.Get("If-None-Match")
+				if atomic.AddInt32(&requests, 1) == 1 {
+					w.Header().Set("ETag", `"etag-v1"`)
+					w.Header().Set("Cache-Control", "max-age=1")
+					_, _ = w.Write(bundle)
+					return
+				}
+				w.Header().Set("ETag", `"etag-v1"`)
+				w.Header().Set("Cache-Control", "max-age=120")
+				w.WriteHeader(http.StatusNotModified)
+			case "/checksum.good":
+				_, _ = w.Write([]byte(checksum + "\n"))
+			default:
+				http.NotFound(w, r)
+			}
+		}))
+		defer server.Close()
+
+		cfgPath := writeRemoteConfig(t, fakeClient, server.URL+"/bundle.tar.gz", server.URL+"/checksum.good", cacheDir, true, true, "")
+
+		if out, err := runSushi(t, repoRoot, "fetch", cfgPath, capturePath); err != nil {
+			t.Fatalf("initial fetch failed: %v\n%s", err, out)
+		}
+		metaBefore := readCurrentMetadata(t, cacheDir)
+		time.Sleep(1200 * time.Millisecond)
+
+		out, err := runSushi(t, repoRoot, "fetch", cfgPath, capturePath)
+		if err != nil {
+			t.Fatalf("second fetch failed: %v\n%s", err, out)
+		}
+		if !strings.Contains(out, "HTTP 304") {
+			t.Fatalf("expected 304 refresh reason, got\n%s", out)
+		}
+		if ifNoneMatch != `"etag-v1"` {
+			t.Fatalf("expected If-None-Match header, got %q", ifNoneMatch)
+		}
+
+		metaAfter := readCurrentMetadata(t, cacheDir)
+		if !metaAfter.FetchedAt.After(metaBefore.FetchedAt) {
+			t.Fatalf("expected fetched_at to refresh, before=%s after=%s", metaBefore.FetchedAt, metaAfter.FetchedAt)
+		}
+		if !metaAfter.ExpiresAt.After(metaBefore.ExpiresAt) {
+			t.Fatalf("expected expires_at to refresh, before=%s after=%s", metaBefore.ExpiresAt, metaAfter.ExpiresAt)
+		}
+	})
+
+	t.Run("fetch command refreshes metadata on Last-Modified-only HTTP 304", func(t *testing.T) {
+		bundle := buildRemoteBundleGzip(t)
+		cacheDir := filepath.Join(t.TempDir(), "cache")
+
+		var ifModifiedSince string
+		var requests int32
+		lastModified := time.Now().Add(-time.Hour).UTC().Format(http.TimeFormat)
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/bundle.tar.gz":
+				ifModifiedSince = r.Header.Get("If-Modified-Since")
+				if atomic.AddInt32(&requests, 1) == 1 {
+					w.Header().Set("Last-Modified", lastModified)
+					w.Header().Set("Cache-Control", "max-age=1")
+					_, _ = w.Write(bundle)
+					return
+				}
+				w.Header().Set("Last-Modified", lastModified)
+				w.Header().Set("Cache-Control", "max-age=90")
+				w.WriteHeader(http.StatusNotModified)
+			default:
+				http.NotFound(w, r)
+			}
+		}))
+		defer server.Close()
+
+		cfgPath := writeRemoteConfig(t, fakeClient, server.URL+"/bundle.tar.gz", "", cacheDir, true, false, "")
+		if out, err := runSushi(t, repoRoot, "fetch", cfgPath, capturePath); err != nil {
+			t.Fatalf("initial fetch failed: %v\n%s", err, out)
+		}
+		metaBefore := readCurrentMetadata(t, cacheDir)
+		time.Sleep(1200 * time.Millisecond)
+
+		out, err := runSushi(t, repoRoot, "fetch", cfgPath, capturePath)
+		if err != nil {
+			t.Fatalf("second fetch failed: %v\n%s", err, out)
+		}
+		if !strings.Contains(out, "HTTP 304") {
+			t.Fatalf("expected 304 refresh reason, got\n%s", out)
+		}
+		if ifModifiedSince == "" {
+			t.Fatal("expected If-Modified-Since header to be sent")
+		}
+
+		metaAfter := readCurrentMetadata(t, cacheDir)
+		if !metaAfter.ExpiresAt.After(metaBefore.ExpiresAt) {
+			t.Fatalf("expected expires_at to refresh, before=%s after=%s", metaBefore.ExpiresAt, metaAfter.ExpiresAt)
+		}
+	})
+
+	t.Run("fetch command downloads new bundle when cache validator changes", func(t *testing.T) {
+		bundleV1 := buildRemoteBundleGzip(t)
+		cacheDir := filepath.Join(t.TempDir(), "cache")
+
+		var ifNoneMatch string
+		var requests int32
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/bundle.tar.gz":
+				ifNoneMatch = r.Header.Get("If-None-Match")
+				if atomic.AddInt32(&requests, 1) == 1 {
+					w.Header().Set("ETag", `"etag-v1"`)
+					_, _ = w.Write(bundleV1)
+					return
+				}
+				w.Header().Set("ETag", `"etag-v2"`)
+				_, _ = w.Write(bundleV1)
+			default:
+				http.NotFound(w, r)
+			}
+		}))
+		defer server.Close()
+
+		cfgPath := writeRemoteConfig(t, fakeClient, server.URL+"/bundle.tar.gz", "", cacheDir, true, false, "")
+		if out, err := runSushi(t, repoRoot, "fetch", cfgPath, capturePath); err != nil {
+			t.Fatalf("initial fetch failed: %v\n%s", err, out)
+		}
+		metaBefore := readCurrentMetadata(t, cacheDir)
+
+		out, err := runSushi(t, repoRoot, "fetch", cfgPath, capturePath)
+		if err != nil {
+			t.Fatalf("second fetch failed: %v\n%s", err, out)
+		}
+		if strings.Contains(out, "HTTP 304") {
+			t.Fatalf("expected full fetch on validator change, got\n%s", out)
+		}
+		if ifNoneMatch != `"etag-v1"` {
+			t.Fatalf("expected If-None-Match header from prior metadata, got %q", ifNoneMatch)
+		}
+		metaAfter := readCurrentMetadata(t, cacheDir)
+		if metaAfter.ETag != `"etag-v2"` {
+			t.Fatalf("expected updated etag, got %q", metaAfter.ETag)
+		}
+		if metaAfter.Digest != metaBefore.Digest {
+			t.Fatalf("expected digest to remain same for same content, before=%s after=%s", metaBefore.Digest, metaAfter.Digest)
+		}
+	})
+
 	t.Run("exit codes", func(t *testing.T) {
 		t.Run("config invalid", func(t *testing.T) {
 			badCfg := filepath.Join(t.TempDir(), "bad.json")
@@ -191,6 +355,39 @@ func TestIntegration(t *testing.T) {
 			_, exitCode := runSushiExitCode(t, repoRoot, "run", cfgPath, capturePath, []string{"SUSHI_FAKE_CLIENT_EXIT_CODE=5"})
 			if exitCode != 14 {
 				t.Fatalf("expected exit code 14, got %d", exitCode)
+			}
+		})
+
+		t.Run("stale cache policy violation", func(t *testing.T) {
+			cacheDir := filepath.Join(t.TempDir(), "cache")
+			seedCacheDir := filepath.Join(cacheDir, "bundles", "stale-digest", "cookbooks")
+			if err := os.MkdirAll(seedCacheDir, 0o755); err != nil {
+				t.Fatalf("seed cache bundle dir: %v", err)
+			}
+			staleMeta := cacheMetadata{
+				Digest:    "stale-digest",
+				FetchedAt: time.Now().Add(-2 * time.Hour).UTC(),
+				SourceURL: "http://127.0.0.1:1/bundle.tar.gz",
+				ExpiresAt: time.Now().Add(-time.Hour).UTC(),
+			}
+			writeCurrentMetadata(t, cacheDir, staleMeta)
+
+			cfg := testConfig{}
+			cfg.Runtime.ClientBinary = fakeClient
+			cfg.SourceOrder = []string{"remote"}
+			cfg.Sources.Remote.Enabled = true
+			cfg.Sources.Remote.URL = "http://127.0.0.1:1/bundle.tar.gz"
+			cfg.Sources.Remote.AllowInsecure = true
+			cfg.Sources.Remote.AllowFallback = true
+			cfg.Sources.Remote.FailIfStale = true
+			cfg.Sources.Remote.MaxCacheAge = "1m"
+			cfg.Sources.Remote.RefreshInterval = "0s"
+			cfg.Sources.Remote.CacheDir = cacheDir
+			cfgPath := writeConfig(t, cfg)
+
+			_, exitCode := runSushiExitCode(t, repoRoot, "print-plan", cfgPath, capturePath, nil)
+			if exitCode != 13 {
+				t.Fatalf("expected exit code 13, got %d", exitCode)
 			}
 		})
 	})
@@ -284,7 +481,124 @@ func TestIntegration(t *testing.T) {
 		}
 	})
 
+	t.Run("windows service lifecycle", func(t *testing.T) {
+		if runtime.GOOS != "windows" {
+			t.Skip("windows-only service integration test")
+		}
+
+		cfgPath := writeLocalConfig(t, fakeClient)
+		_, _ = runSushiService(t, repoRoot, "uninstall", cfgPath)
+
+		out, err := runSushiService(t, repoRoot, "status", cfgPath)
+		if err == nil {
+			t.Fatalf("status should fail before install\n%s", out)
+		}
+		if !containsAny(out, "FAILED 1060", "does not exist") {
+			t.Fatalf("expected missing service status error, got\n%s", out)
+		}
+
+		installOut, installErr := runSushiService(t, repoRoot, "install", cfgPath)
+		if installErr != nil {
+			if !containsAny(installOut, "Access is denied", "FAILED 5", "requires elevation") {
+				t.Fatalf("unexpected install error\n%s", installOut)
+			}
+			for _, cmd := range []string{"start", "stop", "status", "uninstall"} {
+				out, err := runSushiService(t, repoRoot, cmd, cfgPath)
+				if err == nil {
+					t.Fatalf("%s should fail when service install is denied\n%s", cmd, out)
+				}
+			}
+			return
+		}
+		t.Cleanup(func() {
+			_, _ = runSushiService(t, repoRoot, "stop", cfgPath)
+			_, _ = runSushiService(t, repoRoot, "uninstall", cfgPath)
+		})
+
+		out, err = runSushiService(t, repoRoot, "status", cfgPath)
+		if err != nil {
+			t.Fatalf("status after install failed: %v\n%s", err, out)
+		}
+
+		out, err = runSushiService(t, repoRoot, "start", cfgPath)
+		if err != nil && !containsAny(out, "FAILED 1056", "already running") {
+			t.Fatalf("start failed: %v\n%s", err, out)
+		}
+
+		running := false
+		for i := 0; i < 10; i++ {
+			out, err = runSushiService(t, repoRoot, "status", cfgPath)
+			if err == nil && containsAny(out, "RUNNING", "START_PENDING") {
+				running = true
+				break
+			}
+			time.Sleep(500 * time.Millisecond)
+		}
+		if !running {
+			t.Fatalf("service did not reach running state\n%s", out)
+		}
+
+		out, err = runSushiService(t, repoRoot, "stop", cfgPath)
+		if err != nil && !containsAny(out, "FAILED 1062", "not been started") {
+			t.Fatalf("stop failed: %v\n%s", err, out)
+		}
+
+		stopped := false
+		for i := 0; i < 10; i++ {
+			out, err = runSushiService(t, repoRoot, "status", cfgPath)
+			if err == nil && containsAny(out, "STOPPED") {
+				stopped = true
+				break
+			}
+			time.Sleep(500 * time.Millisecond)
+		}
+		if !stopped {
+			t.Fatalf("service did not reach stopped state\n%s", out)
+		}
+
+		out, err = runSushiService(t, repoRoot, "uninstall", cfgPath)
+		if err != nil {
+			t.Fatalf("uninstall failed: %v\n%s", err, out)
+		}
+
+		out, err = runSushiService(t, repoRoot, "status", cfgPath)
+		if err == nil {
+			t.Fatalf("status should fail after uninstall\n%s", out)
+		}
+		if !containsAny(out, "FAILED 1060", "does not exist") {
+			t.Fatalf("expected missing service status after uninstall, got\n%s", out)
+		}
+	})
+
 	assertCapturedArgs(t, capturePath)
+}
+
+func readCurrentMetadata(t *testing.T, cacheDir string) cacheMetadata {
+	t.Helper()
+	bytes, err := os.ReadFile(filepath.Join(cacheDir, "metadata", "current.json"))
+	if err != nil {
+		t.Fatalf("read metadata: %v", err)
+	}
+	meta := cacheMetadata{}
+	if err := json.Unmarshal(bytes, &meta); err != nil {
+		t.Fatalf("parse metadata: %v", err)
+	}
+	return meta
+}
+
+func writeCurrentMetadata(t *testing.T, cacheDir string, meta cacheMetadata) {
+	t.Helper()
+	metadataDir := filepath.Join(cacheDir, "metadata")
+	if err := os.MkdirAll(metadataDir, 0o755); err != nil {
+		t.Fatalf("mkdir metadata dir: %v", err)
+	}
+	bytes, err := json.MarshalIndent(meta, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal metadata: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(metadataDir, "current.json"), bytes, 0o644); err != nil {
+		t.Fatalf("write metadata: %v", err)
+	}
 }
 
 type remoteCase struct {
@@ -352,6 +666,23 @@ func runSushiWithEnv(t *testing.T, root, command, cfgPath, capturePath string, e
 	cmd.Env = append(os.Environ(), append([]string{"SUSHI_FAKE_CLIENT_CAPTURE=" + capturePath}, extraEnv...)...)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
+}
+
+func runSushiService(t *testing.T, root, subcommand, cfgPath string) (string, error) {
+	t.Helper()
+	cmd := exec.Command("go", "run", "./cmd/sushi", "service", subcommand, "-config", cfgPath)
+	cmd.Dir = root
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
+func containsAny(value string, candidates ...string) bool {
+	for _, candidate := range candidates {
+		if strings.Contains(value, candidate) {
+			return true
+		}
+	}
+	return false
 }
 
 func runSushiExitCode(t *testing.T, root, command, cfgPath, capturePath string, extraEnv []string) (string, int) {
