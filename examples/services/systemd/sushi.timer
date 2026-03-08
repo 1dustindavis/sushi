@@ -1,0 +1,11 @@
+[Unit]
+Description=Run sushi every 10 minutes
+
+[Timer]
+OnBootSec=1m
+OnUnitActiveSec=10m
+Unit=sushi.service
+Persistent=true
+
+[Install]
+WantedBy=timers.target

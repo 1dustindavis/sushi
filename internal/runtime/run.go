@@ -1,8 +1,11 @@
 package runtime
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,6 +23,20 @@ type RunRequest struct {
 	LockPollInterval   time.Duration
 	LockStaleAge       time.Duration
 	ConvergeTimeout    time.Duration
+}
+
+type ConvergeError struct {
+	Err      error
+	Output   string
+	ExitCode int
+}
+
+func (e *ConvergeError) Error() string {
+	return e.Err.Error()
+}
+
+func (e *ConvergeError) Unwrap() error {
+	return e.Err
 }
 
 func ExecuteLocalMode(req RunRequest) error {
@@ -90,14 +107,22 @@ func executeConverge(req RunRequest, args []string) error {
 	}
 
 	cmd := exec.CommandContext(ctx, req.ClientBinary, args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	var combined bytes.Buffer
+	stdout := io.MultiWriter(os.Stdout, &combined)
+	stderr := io.MultiWriter(os.Stderr, &combined)
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
 	cmd.Stdin = os.Stdin
 	if err := cmd.Run(); err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
-			return fmt.Errorf("execute converge: timed out after %s", req.ConvergeTimeout)
+			return &ConvergeError{Err: fmt.Errorf("execute converge: timed out after %s", req.ConvergeTimeout), Output: combined.String()}
 		}
-		return fmt.Errorf("execute converge: %w", err)
+		exitCode := 0
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			exitCode = exitErr.ExitCode()
+		}
+		return &ConvergeError{Err: fmt.Errorf("execute converge: %w", err), Output: combined.String(), ExitCode: exitCode}
 	}
 	return nil
 }

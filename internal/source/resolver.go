@@ -25,75 +25,116 @@ type Plan struct {
 	Decisions        []Decision
 }
 
+type Candidate struct {
+	Source         string
+	CookbookPath   string
+	BundleDigest   string
+	ChefServerPath string
+}
+
+type Resolution struct {
+	Plan       *Plan
+	Candidates []Candidate
+}
+
 func Resolve(cfg *config.Config) (*Plan, error) {
+	resolution, err := ResolveWithCandidates(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return resolution.Plan, nil
+}
+
+func ResolveWithCandidates(cfg *config.Config) (*Resolution, error) {
 	plan := &Plan{}
+	var candidates []Candidate
 	for _, sourceName := range cfg.SourceOrder {
 		switch sourceName {
 		case "local":
-			if !cfg.Sources.Local.Enabled {
-				plan.Decisions = append(plan.Decisions, Decision{Source: "local", Reason: "disabled"})
-				continue
-			}
-			info, err := os.Stat(cfg.Sources.Local.CookbookPath)
+			candidate, reason, err := evaluateLocal(cfg)
 			if err != nil {
-				plan.Decisions = append(plan.Decisions, Decision{Source: "local", Reason: fmt.Sprintf("path unavailable: %v", err)})
+				plan.Decisions = append(plan.Decisions, Decision{Source: "local", Reason: reason})
 				continue
 			}
-			if !info.IsDir() {
-				plan.Decisions = append(plan.Decisions, Decision{Source: "local", Reason: "cookbook_path is not a directory"})
-				continue
-			}
-			path, err := filepath.Abs(cfg.Sources.Local.CookbookPath)
-			if err != nil {
-				path = cfg.Sources.Local.CookbookPath
-			}
-			plan.Decisions = append(plan.Decisions, Decision{Source: "local", Reason: "usable"})
-			plan.Selected = "local"
-			plan.SelectedCookbook = path
-			return plan, nil
+			plan.Decisions = append(plan.Decisions, Decision{Source: "local", Reason: reason})
+			candidates = append(candidates, *candidate)
 		case "remote":
-			if !cfg.Sources.Remote.Enabled {
-				plan.Decisions = append(plan.Decisions, Decision{Source: "remote", Reason: "disabled"})
-				continue
-			}
-			if _, err := url.ParseRequestURI(cfg.Sources.Remote.URL); err != nil {
-				plan.Decisions = append(plan.Decisions, Decision{Source: "remote", Reason: "invalid URL"})
-				continue
-			}
-
-			remote, err := ResolveRemote(cfg.Sources.Remote)
+			candidate, reason, err := evaluateRemote(cfg)
 			if err != nil {
-				plan.Decisions = append(plan.Decisions, Decision{Source: "remote", Reason: err.Error()})
+				plan.Decisions = append(plan.Decisions, Decision{Source: "remote", Reason: reason})
 				continue
 			}
-			plan.Decisions = append(plan.Decisions, Decision{Source: "remote", Reason: remote.Reason})
-			plan.Selected = "remote"
-			plan.SelectedCookbook = remote.CookbookPath
-			plan.BundleDigest = remote.Digest
-			return plan, nil
+			plan.Decisions = append(plan.Decisions, Decision{Source: "remote", Reason: reason})
+			candidates = append(candidates, *candidate)
 		case "chef_server":
-			if !cfg.Sources.ChefServer.Enabled {
-				plan.Decisions = append(plan.Decisions, Decision{Source: "chef_server", Reason: "disabled"})
-				continue
-			}
-			reason, err := validateChefServerSource(cfg.Sources.ChefServer)
+			candidate, reason, err := evaluateChefServer(cfg)
 			if err != nil {
-				plan.Decisions = append(plan.Decisions, Decision{Source: "chef_server", Reason: err.Error()})
+				plan.Decisions = append(plan.Decisions, Decision{Source: "chef_server", Reason: reason})
 				continue
 			}
 			plan.Decisions = append(plan.Decisions, Decision{Source: "chef_server", Reason: reason})
-			plan.Selected = "chef_server"
-			plan.ChefServerClient = cfg.Sources.ChefServer.ClientRB
-			return plan, nil
+			candidates = append(candidates, *candidate)
 		default:
 			plan.Decisions = append(plan.Decisions, Decision{Source: sourceName, Reason: "unsupported source"})
 		}
 	}
 
-	if len(plan.Decisions) == 0 {
-		return nil, errors.New("no sources configured")
+	if len(candidates) == 0 {
+		if len(plan.Decisions) == 0 {
+			return nil, errors.New("no sources configured")
+		}
+		return nil, fmt.Errorf("no usable source from configured source_order")
 	}
-	return nil, fmt.Errorf("no usable source from configured source_order")
+
+	selected := candidates[0]
+	plan.Selected = selected.Source
+	plan.SelectedCookbook = selected.CookbookPath
+	plan.BundleDigest = selected.BundleDigest
+	plan.ChefServerClient = selected.ChefServerPath
+	return &Resolution{Plan: plan, Candidates: candidates}, nil
+}
+
+func evaluateLocal(cfg *config.Config) (*Candidate, string, error) {
+	if !cfg.Sources.Local.Enabled {
+		return nil, "disabled", errors.New("local disabled")
+	}
+	info, err := os.Stat(cfg.Sources.Local.CookbookPath)
+	if err != nil {
+		return nil, fmt.Sprintf("path unavailable: %v", err), err
+	}
+	if !info.IsDir() {
+		return nil, "cookbook_path is not a directory", errors.New("local cookbook path not dir")
+	}
+	path, err := filepath.Abs(cfg.Sources.Local.CookbookPath)
+	if err != nil {
+		path = cfg.Sources.Local.CookbookPath
+	}
+	return &Candidate{Source: "local", CookbookPath: path}, "usable", nil
+}
+
+func evaluateRemote(cfg *config.Config) (*Candidate, string, error) {
+	if !cfg.Sources.Remote.Enabled {
+		return nil, "disabled", errors.New("remote disabled")
+	}
+	if _, err := url.ParseRequestURI(cfg.Sources.Remote.URL); err != nil {
+		return nil, "invalid URL", err
+	}
+	remote, err := ResolveRemote(cfg.Sources.Remote)
+	if err != nil {
+		return nil, err.Error(), err
+	}
+	return &Candidate{Source: "remote", CookbookPath: remote.CookbookPath, BundleDigest: remote.Digest}, remote.Reason, nil
+}
+
+func evaluateChefServer(cfg *config.Config) (*Candidate, string, error) {
+	if !cfg.Sources.ChefServer.Enabled {
+		return nil, "disabled", errors.New("chef_server disabled")
+	}
+	reason, err := validateChefServerSource(cfg.Sources.ChefServer)
+	if err != nil {
+		return nil, err.Error(), err
+	}
+	return &Candidate{Source: "chef_server", ChefServerPath: cfg.Sources.ChefServer.ClientRB}, reason, nil
 }
 
 func validateChefServerSource(cfg config.ChefServerSource) (string, error) {

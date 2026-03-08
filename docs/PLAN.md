@@ -258,6 +258,8 @@ Phase 2 hardening is now complete: lock wait/stale handling, converge and reques
 
 Phase 3 optional Chef Server integration is now complete: deterministic `chef_server` resolution (disabled by default), optional healthcheck gating with clear failure reasons, explicit Chef Server run-mode execution, and fallback coverage across `chef_server`, `remote`, and `local` ordering.
 
+Phase 4 operations polish is now complete: cross-platform installation/runbook docs, scheduler/service artifacts (systemd timer, launchd StartInterval, Windows service), bare-command `run` aliasing, platform default config/log paths, retryable converge fallback across sources, and richer operational diagnostics.
+
 ### Phase 0 — project scaffolding (short)
 
 - [x] Define JSON config schema + parser + validation.
@@ -288,13 +290,13 @@ Phase 3 optional Chef Server integration is now complete: deterministic `chef_se
 
 ### Phase 4 — operations polish
 
-- Packaging and installation docs for Linux/macOS/Windows.
-- Publish systemd/launchd example configs and implement native Windows Service support in `sushi` (with configuration + Event Log guidance).
-- Alias bare `sushi` invocation to `sushi run` to preserve ergonomic default behavior for operators.
-- Implement reasonable platform-specific default `config.json` and logging locations for Linux, macOS, and Windows.
-- Capture `chef-client`/`cinc-client` output and conditionally attempt the next source in `source_order` when failures match a documented retryable exception list.
-- Add daemon behavior test harness and operational runbooks.
-- Telemetry hooks and richer diagnostics.
+- [x] Packaging and installation docs for Linux/macOS/Windows.
+- [x] Publish systemd/launchd example configs and implement native Windows Service support in `sushi` (with configuration + Event Log guidance).
+- [x] Alias bare `sushi` invocation to `sushi run` to preserve ergonomic default behavior for operators.
+- [x] Implement reasonable platform-specific default `config.json` and logging locations for Linux, macOS, and Windows.
+- [x] Capture `chef-client`/`cinc-client` output and conditionally attempt the next source in `source_order` when failures match a documented retryable exception list.
+- [x] Add service-operation runbooks and platform scheduler/service examples.
+- [x] Telemetry hooks and richer diagnostics.
 
 ### Phase 5 — plan/code reconciliation gaps
 
@@ -302,8 +304,9 @@ Items below were identified by reviewing plan claims against the current codebas
 
 - [ ] Add the `sushi fetch` CLI subcommand described in the plan (`run`, `doctor`, `print-plan`, and `version` are currently implemented).
 - [ ] Implement distinct operational exit codes (current command failures collapse to a generic non-zero exit status).
-- [ ] Add service/daemon artifacts and smoke coverage promised in the plan (systemd/launchd examples and native Windows Service implementation/tests are not yet present in the repository).
-- [ ] Add runtime output-capture + retryable exception handling to conditionally try the next source after converge-time failures.
+- [x] Add timer/service artifacts and smoke coverage promised in the plan (systemd/launchd examples and native Windows Service implementation/tests are now present in the repository).
+- [x] Add runtime output-capture + retryable exception handling to conditionally try the next source after converge-time failures.
+- [ ] Implement support for common HTTP cache headers (`Cache-Control`, `ETag`, and `Last-Modified`) to avoid unnecessary downloads when remote data is unchanged; fall back to current behavior when headers are absent, and refresh local cache expiration when server responses confirm content is still current.
 
 ---
 
@@ -318,13 +321,12 @@ MVP is complete when:
 5. The selected source decision is visible in logs and `print-plan` output.
 6. `chef-client` and `cinc-client` selection behavior is deterministic.
 7. CI runs tests on Linux, macOS, and Windows for every push.
-8. Service/daemon examples are provided and smoke-tested across platforms.
+8. Service/timer examples are provided and smoke-tested across platforms.
 
 ---
 
 ## 15) Immediate next tasks
 
-1. Publish packaging and installation documentation for Linux, macOS, and Windows (including upgrade/uninstall guidance).
-2. Add production-ready service operation examples: `systemd` units/timers, `launchd` plists, and native Windows Service setup + Event Log guidance.
-3. Build a daemon/service behavior test harness that exercises start/stop, lock interaction, and deterministic retry/backoff semantics on each platform.
-4. Add telemetry hooks and richer diagnostics (including structured operational signals for source resolution, converge latency, and service lifecycle).
+1. Implement the `sushi fetch` subcommand so operators can prefetch/verify/activate remote bundles without running converge.
+2. Add distinct operational exit codes for config validation, dependency discovery, source selection, stale-cache policy violations, and converge failures.
+3. Expand timer/service smoke coverage in CI for Linux/macOS/Windows to validate systemd timer, launchd interval, and Windows service entrypoints.

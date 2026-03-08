@@ -110,3 +110,23 @@ Age threshold for treating an existing lock as stale.
 
 **execution.converge_timeout** *duration string* default: empty (no timeout) required: no  
 Maximum runtime for converge execution before cancellation.
+
+
+## Platform defaults
+
+If `-config` is omitted, sushi uses a platform default path:
+
+- Linux: `/etc/sushi/config.json`
+- macOS: `/Library/Application Support/sushi/config.json`
+- Windows: `%ProgramData%\sushi\config.json`
+
+Default log file locations:
+
+- Linux: `/var/log/sushi/sushi.log`
+- macOS: `/Library/Logs/sushi/sushi.log`
+- Windows: `%ProgramData%\sushi\logs\sushi.log`
+
+Environment overrides:
+
+- `SUSHI_CONFIG_PATH`
+- `SUSHI_LOG_PATH`
