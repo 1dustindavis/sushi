@@ -1,10 +1,10 @@
-name: Go Test
+name: unit-tests
 
 on:
   push:
 
 jobs:
-  test:
+  unit:
     strategy:
       fail-fast: false
       matrix:
@@ -21,4 +21,4 @@ jobs:
           go-version-file: go.mod
 
       - name: Test
-        run: go test ./...
+        run: go test -race -cover ./...
