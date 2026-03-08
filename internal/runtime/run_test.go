@@ -65,3 +65,17 @@ func TestAcquireLockRemovesStaleLock(t *testing.T) {
 	}
 	release()
 }
+
+func TestExecuteChefServerModeRequiresClientRBPath(t *testing.T) {
+	err := ExecuteChefServerMode(RunRequest{ClientBinary: "chef-client"})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestExecuteChefServerModeRequiresExistingClientRB(t *testing.T) {
+	err := ExecuteChefServerMode(RunRequest{ClientBinary: "chef-client", ClientRBPath: filepath.Join(t.TempDir(), "missing.rb")})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}

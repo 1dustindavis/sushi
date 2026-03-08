@@ -82,3 +82,31 @@ func TestValidateExecutionDurations(t *testing.T) {
 		t.Fatalf("expected config to validate, got %v", err)
 	}
 }
+
+func TestValidateChefServerHealthcheckTimeoutDuration(t *testing.T) {
+	cfg := validConfig()
+	cfg.SourceOrder = []string{"chef_server"}
+	cfg.Sources.Local.Enabled = false
+	cfg.Sources.Remote.Enabled = false
+	cfg.Sources.ChefServer.Enabled = true
+	cfg.Sources.ChefServer.ClientRB = "/tmp/client.rb"
+	cfg.Sources.ChefServer.Healthcheck.Timeout = "2s"
+
+	if err := Validate(cfg); err != nil {
+		t.Fatalf("expected config to validate, got %v", err)
+	}
+}
+
+func TestValidateChefServerHealthcheckTimeoutInvalid(t *testing.T) {
+	cfg := validConfig()
+	cfg.SourceOrder = []string{"chef_server"}
+	cfg.Sources.Local.Enabled = false
+	cfg.Sources.Remote.Enabled = false
+	cfg.Sources.ChefServer.Enabled = true
+	cfg.Sources.ChefServer.ClientRB = "/tmp/client.rb"
+	cfg.Sources.ChefServer.Healthcheck.Timeout = "nope"
+
+	if err := Validate(cfg); err == nil {
+		t.Fatal("expected error")
+	}
+}

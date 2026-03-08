@@ -168,6 +168,73 @@ func TestResolveRemoteFailsWhenCacheIsStaleAndPolicyRequiresFresh(t *testing.T) 
 	}
 }
 
+func TestResolveSelectsChefServerWhenHealthy(t *testing.T) {
+	tmp := t.TempDir()
+	clientRB := filepath.Join(tmp, "client.rb")
+	if err := os.WriteFile(clientRB, []byte("chef_server_url 'https://chef.example.com'\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	cfg := &config.Config{
+		SourceOrder: []string{"chef_server", "local"},
+		Sources: config.SourcesConfig{
+			Local: config.LocalSource{Enabled: true, CookbookPath: filepath.Join(tmp, "missing")},
+			ChefServer: config.ChefServerSource{Enabled: true, ClientRB: clientRB, Healthcheck: struct {
+				Endpoint string `json:"endpoint"`
+				Timeout  string `json:"timeout"`
+			}{Endpoint: server.URL, Timeout: "1s"}},
+		},
+	}
+
+	plan, err := Resolve(cfg)
+	if err != nil {
+		t.Fatalf("unexpected resolve error: %v", err)
+	}
+	if plan.Selected != "chef_server" {
+		t.Fatalf("expected chef_server, got %s", plan.Selected)
+	}
+	if plan.ChefServerClient != clientRB {
+		t.Fatalf("expected client.rb path to be captured")
+	}
+}
+
+func TestResolveFallsBackWhenChefServerHealthcheckFails(t *testing.T) {
+	tmp := t.TempDir()
+	cookbooks := filepath.Join(tmp, "cookbooks")
+	if err := os.MkdirAll(cookbooks, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	clientRB := filepath.Join(tmp, "client.rb")
+	if err := os.WriteFile(clientRB, []byte("chef_server_url 'https://chef.example.com'\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &config.Config{
+		SourceOrder: []string{"chef_server", "local"},
+		Sources: config.SourcesConfig{
+			Local: config.LocalSource{Enabled: true, CookbookPath: cookbooks},
+			ChefServer: config.ChefServerSource{Enabled: true, ClientRB: clientRB, Healthcheck: struct {
+				Endpoint string `json:"endpoint"`
+				Timeout  string `json:"timeout"`
+			}{Endpoint: "http://127.0.0.1:1", Timeout: "200ms"}},
+		},
+	}
+
+	plan, err := Resolve(cfg)
+	if err != nil {
+		t.Fatalf("unexpected resolve error: %v", err)
+	}
+	if plan.Selected != "local" {
+		t.Fatalf("expected local fallback, got %s", plan.Selected)
+	}
+	if len(plan.Decisions) < 2 || plan.Decisions[0].Source != "chef_server" {
+		t.Fatalf("expected chef_server decision first, got %#v", plan.Decisions)
+	}
+}
 func TestResolveNoUsableSources(t *testing.T) {
 	cfg := &config.Config{
 		SourceOrder: []string{"local", "remote"},

@@ -38,8 +38,12 @@ type testConfig struct {
 			CacheDir        string `json:"cache_dir"`
 		} `json:"remote"`
 		ChefServer struct {
-			Enabled  bool   `json:"enabled"`
-			ClientRB string `json:"client_rb"`
+			Enabled     bool   `json:"enabled"`
+			ClientRB    string `json:"client_rb"`
+			Healthcheck struct {
+				Endpoint string `json:"endpoint"`
+				Timeout  string `json:"timeout"`
+			} `json:"healthcheck"`
 		} `json:"chef_server"`
 	} `json:"sources"`
 	Execution struct {
@@ -101,6 +105,69 @@ func TestIntegration(t *testing.T) {
 					}
 				}
 			})
+		}
+	})
+
+	t.Run("chef_server", func(t *testing.T) {
+		clientRB := filepath.Join(t.TempDir(), "client.rb")
+		if err := os.WriteFile(clientRB, []byte("chef_server_url 'https://chef.example.com'\n"), 0o644); err != nil {
+			t.Fatalf("write client.rb: %v", err)
+		}
+		healthServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer healthServer.Close()
+
+		cfgPath := writeChefServerConfig(t, fakeClient, clientRB, healthServer.URL, "500ms")
+		for _, command := range []string{"print-plan", "doctor", "run"} {
+			out, err := runSushi(t, repoRoot, command, cfgPath, capturePath)
+			if err != nil {
+				t.Fatalf("%s failed: %v\n%s", command, err, out)
+			}
+			if !strings.Contains(out, "selected source: chef_server") && command != "doctor" {
+				t.Fatalf("%s output missing chef_server selection\n%s", command, out)
+			}
+			if command == "doctor" && !strings.Contains(out, "source resolution: OK (selected chef_server)") {
+				t.Fatalf("doctor output missing chef_server status\n%s", out)
+			}
+			if command == "run" {
+				args, readErr := os.ReadFile(capturePath)
+				if readErr != nil {
+					t.Fatalf("read capture args: %v", readErr)
+				}
+				if strings.Contains(string(args), "-z") {
+					t.Fatalf("chef_server run should not include -z args: %s", args)
+				}
+			}
+		}
+	})
+
+	t.Run("chef_server falls back to local", func(t *testing.T) {
+		repo := repoRoot
+		clientRB := filepath.Join(t.TempDir(), "client.rb")
+		if err := os.WriteFile(clientRB, []byte("chef_server_url 'https://chef.example.com'\n"), 0o644); err != nil {
+			t.Fatalf("write client.rb: %v", err)
+		}
+		cfg := testConfig{}
+		cfg.Runtime.ClientBinary = fakeClient
+		cfg.SourceOrder = []string{"chef_server", "local", "remote"}
+		cfg.Sources.ChefServer.Enabled = true
+		cfg.Sources.ChefServer.ClientRB = clientRB
+		cfg.Sources.ChefServer.Healthcheck.Endpoint = "http://127.0.0.1:1"
+		cfg.Sources.ChefServer.Healthcheck.Timeout = "200ms"
+		cfg.Sources.Local.Enabled = true
+		cfg.Sources.Local.CookbookPath = filepath.Join(repo, "integration", "testdata", "local-cookbooks")
+		cfgPath := writeConfig(t, cfg)
+
+		out, err := runSushi(t, repoRoot, "print-plan", cfgPath, capturePath)
+		if err != nil {
+			t.Fatalf("print-plan failed: %v\n%s", err, out)
+		}
+		if !strings.Contains(out, "selected source: local") {
+			t.Fatalf("expected local fallback\n%s", out)
+		}
+		if !strings.Contains(out, "- chef_server: healthcheck failed") {
+			t.Fatalf("expected chef_server failure reason\n%s", out)
 		}
 	})
 
@@ -235,6 +302,22 @@ func writeLocalConfigWithLock(t *testing.T, client, lockPath string) string {
 	cfg.Sources.Remote.Enabled = false
 	cfg.Sources.ChefServer.Enabled = false
 	cfg.Execution.LockFile = lockPath
+
+	return writeConfig(t, cfg)
+}
+
+func writeChefServerConfig(t *testing.T, client, clientRB, endpoint, timeout string) string {
+	t.Helper()
+
+	cfg := testConfig{}
+	cfg.Runtime.ClientBinary = client
+	cfg.SourceOrder = []string{"chef_server", "local", "remote"}
+	cfg.Sources.Local.Enabled = false
+	cfg.Sources.Remote.Enabled = false
+	cfg.Sources.ChefServer.Enabled = true
+	cfg.Sources.ChefServer.ClientRB = clientRB
+	cfg.Sources.ChefServer.Healthcheck.Endpoint = endpoint
+	cfg.Sources.ChefServer.Healthcheck.Timeout = timeout
 
 	return writeConfig(t, cfg)
 }

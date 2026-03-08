@@ -72,13 +72,21 @@ Causes resolution failure if the selected cache is stale.
 Enables or disables chef server source configuration.
 
 **sources.chef_server.client_rb** *string* default: none required: conditional  
-Path to `client.rb`. Required when `sources.chef_server.enabled=true` and `chef_server` appears in `source_order`.
+Path to an existing `client.rb`. Required when `sources.chef_server.enabled=true` and `chef_server` appears in `source_order`. During `run`, this path is passed directly to `chef-client`/`cinc-client` with `-c` (server mode, not `-z`).
 
 **sources.chef_server.healthcheck.endpoint** *string* default: empty required: no  
-Optional endpoint used for chef server health checks.
+Optional endpoint used for Chef Server health checks during source resolution. If unset, sushi treats `chef_server` as usable once `client_rb` exists.
 
-**sources.chef_server.healthcheck.timeout** *duration string* default: empty required: no  
-Optional timeout for chef server health check requests.
+Healthcheck endpoint requirements and behavior:
+- Endpoint should be an HTTP(S) URL reachable from the node running sushi.
+- Choose an endpoint that reflects Chef Server availability for the node (for example an org-scoped API path), not a generic unrelated URL.
+- A response is considered healthy only when sushi receives an HTTP status in the `2xx` range.
+- Any non-`2xx` status (for example `401`, `403`, `404`, `429`, `500`) is treated as unhealthy for source selection.
+- Network failures (DNS, connection refused/reset, TLS handshake errors, timeout) are treated as unhealthy.
+- On failure, sushi records the exact failure reason in the source decision list (`print-plan` / `doctor`) and continues evaluating the next source in `source_order`.
+
+**sources.chef_server.healthcheck.timeout** *duration string* default: `2s` required: no  
+Optional timeout for Chef Server health check requests. Must be a valid duration and greater than zero when set. When unset, sushi uses `2s`.
 
 ## execution
 
