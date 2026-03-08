@@ -82,7 +82,7 @@ func TestResolveRemoteSupportsTarRstBundle(t *testing.T) {
 	cfg := &config.Config{
 		SourceOrder: []string{"remote"},
 		Sources: config.SourcesConfig{
-			Remote: config.RemoteSource{Enabled: true, URL: server.URL + "/cookbooks.tar.rst", CacheDir: filepath.Join(tmp, "cache")},
+			Remote: config.RemoteSource{Enabled: true, URL: server.URL + "/cookbooks.tar.rst", CacheDir: filepath.Join(tmp, "cache"), AllowInsecure: true, SkipChecksum: true},
 		},
 	}
 
