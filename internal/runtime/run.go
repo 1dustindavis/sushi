@@ -12,6 +12,7 @@ type RunRequest struct {
 	CookbookPath       string
 	RunListFile        string
 	JSONAttributesFile string
+	LockFile           string
 }
 
 func ExecuteLocalMode(req RunRequest) error {
@@ -21,6 +22,16 @@ func ExecuteLocalMode(req RunRequest) error {
 	if req.CookbookPath == "" {
 		return fmt.Errorf("cookbook path is required")
 	}
+
+	releaseLock := func() {}
+	if req.LockFile != "" {
+		release, err := acquireLock(req.LockFile)
+		if err != nil {
+			return err
+		}
+		releaseLock = release
+	}
+	defer releaseLock()
 
 	tmpDir, err := os.MkdirTemp("", "sushi-run-")
 	if err != nil {
@@ -51,4 +62,22 @@ func ExecuteLocalMode(req RunRequest) error {
 		return fmt.Errorf("execute converge: %w", err)
 	}
 	return nil
+}
+
+func acquireLock(path string) (func(), error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return nil, fmt.Errorf("prepare lock directory: %w", err)
+	}
+	lock, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	if err != nil {
+		if os.IsExist(err) {
+			return nil, fmt.Errorf("lock file already exists: %s", path)
+		}
+		return nil, fmt.Errorf("create lock file: %w", err)
+	}
+	_ = lock.Close()
+
+	return func() {
+		_ = os.Remove(path)
+	}, nil
 }

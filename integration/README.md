@@ -1,51 +1,58 @@
 # Integration tests
 
-This directory contains end-to-end CLI smoke tests for `sushi`.
+This directory contains end-to-end CLI tests for `sushi`.
 
 ## Scope
 
-The integration suite covers both **local-source** and **remote-source** behavior. It validates that the primary commands work with generated test config:
+The integration suite validates both local and remote source behavior for core commands:
 
 - `sushi print-plan`
 - `sushi doctor`
 - `sushi run`
 
-The tests verify expected command output and ensure `run` invokes the configured client in local/zero mode with required flags.
+It verifies command output and confirms `run` invokes the configured client in local/zero mode with required flags.
 
 ## Test layout
 
-- `cli_test.go`: Integration test entrypoint for both modes.
-  - `TestIntegrationLocal`: Local-mode integration smoke coverage.
-  - `TestIntegrationRemote`: Remote-mode integration smoke coverage using an in-test HTTP bundle server.
-- `testdata/local-cookbooks/`: Minimal cookbook tree used by local-source tests.
-- `testdata/fakeclient/`: Tiny fake client binary used to capture invocation arguments.
+- `cli_test.go`: integration test entrypoint.
+  - `TestIntegration`: top-level suite with subtests for:
+    - local-source smoke coverage
+    - remote-source matrix coverage
+    - lock-file behavior
+- `testdata/local-cookbooks/`: minimal cookbook tree used by local-source tests.
+- `testdata/fakeclient/`: tiny fake client binary used to capture invocation arguments.
+
+## Remote matrix coverage
+
+The remote integration matrix validates:
+
+- good and bad checksum behavior
+- good and bad URL behavior
+- success/failure combinations for `allow_insecure` and `skip_checksum`
+- supported compression extensions (`.tar.gz`, `.tgz`, `.tar.zst`, `.tar.rst`)
+
+The remote tests use an in-test HTTP server that serves bundles and checksum responses.
+
+## Lock-file coverage
+
+Integration tests exercise both lock states:
+
+- success when `execution.lock_file` is configured and no lock file exists
+- failure when the lock file already exists
 
 ## How it works
 
 1. Build the fake client binary for the current OS.
-2. Generate temporary Sushi config files for each test mode.
+2. Generate temporary Sushi config files per test scenario.
 3. Execute CLI commands through `go run ./cmd/sushi ...`.
 4. Assert command output and captured fake-client arguments.
-
-For remote mode, the test also:
-
-1. Builds an in-memory `tar.gz` bundle with a `cookbooks/` tree.
-2. Serves it through a local test HTTP server.
-3. Configures Sushi remote source to fetch and cache the bundle.
 
 ## Running locally
 
 From repository root:
 
 ```bash
-go test ./integration -v
-```
-
-Or run one mode explicitly:
-
-```bash
-go test ./integration -run TestIntegrationLocal -v
-go test ./integration -run TestIntegrationRemote -v
+go test ./integration -run TestIntegration -v
 ```
 
 Or run the full suite:
@@ -56,9 +63,8 @@ go test ./...
 
 ## CI
 
-Integration tests are run in GitHub Actions via:
+Integration tests run in GitHub Actions via:
 
-- `.github/workflows/integration-local.yml`
-- `.github/workflows/integration-remote.yml`
+- `.github/workflows/integration.yml`
 
-Both run on a multi-OS matrix for every push.
+The workflow runs on a multi-OS matrix for every push.
