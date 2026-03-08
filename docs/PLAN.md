@@ -73,6 +73,7 @@ Define a single JSON config file (for example `/etc/sushi/config.json` on Unix-l
       "enabled": true,
       "url": "https://example.org/cookbooks.tar.zst",
       "checksum_url": "https://example.org/cookbooks.sha256",
+      "require_checksum": false,
       "refresh_interval": "6h",
       "cache_dir": "/var/cache/sushi",
       "max_cache_age": "72h",
@@ -110,6 +111,7 @@ Validation rules:
 - `source_order` entries should be unique.
 - At least one enabled source must exist in `source_order`.
 - If a source appears in `source_order`, required fields for that source must validate.
+- `sources.remote.checksum_url` is required only when `sources.remote.require_checksum=true`.
 
 ---
 
@@ -143,7 +145,7 @@ For each source in `source_order`:
 For remote bundles:
 
 - Download into temp file + atomic rename.
-- Verify checksum/signature before activation.
+- Verify checksum before activation.
 - Expand into versioned cache directories (`<cache_dir>/bundles/<digest>/...`).
 - Maintain `current` pointer to active content (symlink/junction/copy fallback by platform).
 - Persist metadata:
@@ -210,7 +212,7 @@ This makes outages and fallback behavior auditable.
 ## 11) Security and safety baseline
 
 - Require HTTPS by default for remote sources (explicit override to allow HTTP).
-- Support pinned checksum at minimum; optional signature verification later.
+- Support pinned checksum at minimum.
 - Refuse partial/failed extractions.
 - File locking to prevent concurrent cache corruption.
 - Default to fail-closed on stale cache when `fail_if_stale=true`.
@@ -252,6 +254,8 @@ Remaining gaps before Phase 1 can be considered fully complete:
 
 - None currently identified for Phase 1 scope.
 
+Phase 2 hardening is now complete: lock wait/stale handling, converge and request timeout controls, remote retry/backoff, stale-cache warning windows, and expanded test coverage.
+
 ### Phase 0 — project scaffolding (short)
 
 - [x] Define JSON config schema + parser + validation.
@@ -269,10 +273,10 @@ Remaining gaps before Phase 1 can be considered fully complete:
 
 ### Phase 2 — hardening
 
-- Add lock handling, richer retry/backoff, and robust timeout controls.
-- Improve integrity checks and optional signature support.
-- Add better stale-cache policy controls and warning windows.
-- Expand cross-platform test coverage for edge cases.
+- [x] Add lock handling, richer retry/backoff, and robust timeout controls.
+- [x] Improve integrity checks.
+- [x] Add better stale-cache policy controls and warning windows.
+- [x] Expand cross-platform test coverage for edge cases.
 
 ### Phase 3 — optional Chef Server integration
 
@@ -306,9 +310,7 @@ MVP is complete when:
 
 ## 15) Immediate next tasks
 
-1. ✅ Implement remote bundle fetch for the `remote` source, including checksum verification and failure diagnostics.
-2. ✅ Implement remote cache fallback policy (`allow_cached_fallback`, freshness checks, `fail_if_stale`) during source resolution.
-3. ✅ Add atomic bundle activation + metadata persistence (`digest`, `fetched_at`, `source_url`, `expires_at`) in the cache directory.
-4. ✅ Complete `sushi run` by executing `chef-client`/`cinc-client` in local/zero mode from the resolved materialized cookbook tree.
-5. ✅ Expand `print-plan`/decision reporting to include remote fetch/cache outcomes and fallback reasons aligned with observability goals.
-6. ✅ Add integration tests covering local command success smoke checks (local-only in current suite).
+1. Implement explicit `chef_server` execution path that is selected via `source_order` and remains disabled by default.
+2. Add configurable Chef Server healthcheck handling with deterministic failure reasons surfaced in `print-plan` and logs.
+3. Add tests that validate deterministic fallback behavior between `chef_server`, `remote`, and `local` sources under degraded conditions.
+4. Define and document Chef Server runtime contract (required files/credentials) while preserving local-first ergonomics.

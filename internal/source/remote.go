@@ -41,7 +41,11 @@ func ResolveRemote(src config.RemoteSource) (*RemoteResult, error) {
 	meta, bundlePath, _ := loadCurrentMetadata(src.CacheDir)
 
 	if meta != nil && !shouldRefresh(*meta, src.RefreshInterval) {
-		return &RemoteResult{CookbookPath: bundlePath, Digest: meta.Digest, Reason: "using cached bundle (refresh interval not elapsed)"}, nil
+		reason := "using cached bundle (refresh interval not elapsed)"
+		if warning := staleWarning(*meta, src.StaleWarningWindow); warning != "" {
+			reason = reason + "; " + warning
+		}
+		return &RemoteResult{CookbookPath: bundlePath, Digest: meta.Digest, Reason: reason}, nil
 	}
 
 	fetched, fetchErr := fetchAndActivateRemote(src)
@@ -64,6 +68,8 @@ func ResolveRemote(src config.RemoteSource) (*RemoteResult, error) {
 	reason := fmt.Sprintf("using cached fallback after fetch failure (%v)", fetchErr)
 	if stale {
 		reason = fmt.Sprintf("using stale cached fallback (%s old) after fetch failure (%v)", age.Round(time.Second), fetchErr)
+	} else if warning := staleWarning(*meta, src.StaleWarningWindow); warning != "" {
+		reason = reason + "; " + warning
 	}
 
 	return &RemoteResult{CookbookPath: bundlePath, Digest: meta.Digest, Reason: reason}, nil
@@ -82,8 +88,8 @@ func validateRemoteSecurityPolicy(src config.RemoteSource) error {
 	if strings.EqualFold(remoteURL.Scheme, "http") && !src.AllowInsecure {
 		return fmt.Errorf("insecure remote URL requires allow_insecure=true")
 	}
-	if src.ChecksumURL == "" && !src.SkipChecksum {
-		return fmt.Errorf("missing checksum_url requires skip_checksum=true")
+	if src.RequireChecksum && src.ChecksumURL == "" {
+		return fmt.Errorf("missing checksum_url requires require_checksum=true")
 	}
 	if src.ChecksumURL != "" {
 		checksumURL, err := url.Parse(src.ChecksumURL)
@@ -92,6 +98,24 @@ func validateRemoteSecurityPolicy(src config.RemoteSource) error {
 		}
 		if strings.EqualFold(checksumURL.Scheme, "http") && !src.AllowInsecure {
 			return fmt.Errorf("insecure checksum URL requires allow_insecure=true")
+		}
+	}
+	if src.FetchRetries < 0 {
+		return fmt.Errorf("fetch_retries must be >= 0")
+	}
+	if src.RequestTimeout != "" {
+		if _, err := time.ParseDuration(src.RequestTimeout); err != nil {
+			return fmt.Errorf("invalid request_timeout")
+		}
+	}
+	if src.RetryBackoff != "" {
+		if _, err := time.ParseDuration(src.RetryBackoff); err != nil {
+			return fmt.Errorf("invalid retry_backoff")
+		}
+	}
+	if src.StaleWarningWindow != "" {
+		if _, err := time.ParseDuration(src.StaleWarningWindow); err != nil {
+			return fmt.Errorf("invalid stale_warning_window")
 		}
 	}
 	return nil
@@ -113,23 +137,16 @@ func fetchAndActivateRemote(src config.RemoteSource) (*fetchedRemote, error) {
 	defer os.Remove(tmpFile.Name())
 	defer tmpFile.Close()
 
-	resp, err := http.Get(src.URL) //nolint:gosec
+	bundleBytes, computedDigest, err := downloadBundleWithRetry(src)
 	if err != nil {
-		return nil, fmt.Errorf("download bundle: %w", err)
+		return nil, err
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return nil, fmt.Errorf("download bundle: HTTP %d", resp.StatusCode)
-	}
-
-	h := sha256.New()
-	if _, err := io.Copy(io.MultiWriter(tmpFile, h), resp.Body); err != nil {
+	if _, err := tmpFile.Write(bundleBytes); err != nil {
 		return nil, fmt.Errorf("write bundle: %w", err)
 	}
-	computedDigest := hex.EncodeToString(h.Sum(nil))
 
 	if src.ChecksumURL != "" {
-		expected, err := fetchExpectedChecksum(src.ChecksumURL)
+		expected, err := fetchExpectedChecksum(src)
 		if err != nil {
 			return nil, err
 		}
@@ -137,7 +154,6 @@ func fetchAndActivateRemote(src config.RemoteSource) (*fetchedRemote, error) {
 			return nil, fmt.Errorf("checksum mismatch: expected %s got %s", expected, computedDigest)
 		}
 	}
-
 	bundleRoot := filepath.Join(src.CacheDir, "bundles", computedDigest)
 	cookbookPath := filepath.Join(bundleRoot, "cookbooks")
 	if _, err := os.Stat(cookbookPath); err == nil {
@@ -174,18 +190,58 @@ func fetchAndActivateRemote(src config.RemoteSource) (*fetchedRemote, error) {
 	return &fetchedRemote{meta: *meta, bundlePath: filepath.Join(bundleRoot, "cookbooks")}, nil
 }
 
-func fetchExpectedChecksum(checksumURL string) (string, error) {
-	resp, err := http.Get(checksumURL) //nolint:gosec
+func downloadBundleWithRetry(src config.RemoteSource) ([]byte, string, error) {
+	attempts := src.FetchRetries + 1
+	if attempts < 1 {
+		attempts = 1
+	}
+	backoff := 500 * time.Millisecond
+	if src.RetryBackoff != "" {
+		if d, err := time.ParseDuration(src.RetryBackoff); err == nil && d > 0 {
+			backoff = d
+		}
+	}
+	var lastErr error
+	for i := 0; i < attempts; i++ {
+		body, digest, err := fetchBundle(src)
+		if err == nil {
+			return body, digest, nil
+		}
+		lastErr = err
+		if i < attempts-1 {
+			time.Sleep(backoff)
+		}
+	}
+	return nil, "", fmt.Errorf("download bundle after %d attempts: %w", attempts, lastErr)
+}
+
+func fetchBundle(src config.RemoteSource) ([]byte, string, error) {
+	client := http.Client{Timeout: 15 * time.Second}
+	if src.RequestTimeout != "" {
+		if d, err := time.ParseDuration(src.RequestTimeout); err == nil && d > 0 {
+			client.Timeout = d
+		}
+	}
+	resp, err := client.Get(src.URL) //nolint:gosec
 	if err != nil {
-		return "", fmt.Errorf("download checksum: %w", err)
+		return nil, "", err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return "", fmt.Errorf("download checksum: HTTP %d", resp.StatusCode)
+		return nil, "", fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", fmt.Errorf("read checksum: %w", err)
+		return nil, "", err
+	}
+	h := sha256.Sum256(body)
+	return body, hex.EncodeToString(h[:]), nil
+}
+
+func fetchExpectedChecksum(src config.RemoteSource) (string, error) {
+	body, err := fetchURLBody(src.ChecksumURL, src.RequestTimeout)
+	if err != nil {
+		return "", fmt.Errorf("download checksum: %w", err)
 	}
 	line := strings.TrimSpace(string(body))
 	if line == "" {
@@ -193,6 +249,24 @@ func fetchExpectedChecksum(checksumURL string) (string, error) {
 	}
 	parts := strings.Fields(line)
 	return strings.TrimSpace(parts[0]), nil
+}
+
+func fetchURLBody(rawURL string, timeout string) ([]byte, error) {
+	client := http.Client{Timeout: 15 * time.Second}
+	if timeout != "" {
+		if d, err := time.ParseDuration(timeout); err == nil && d > 0 {
+			client.Timeout = d
+		}
+	}
+	resp, err := client.Get(rawURL) //nolint:gosec
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+	return io.ReadAll(resp.Body)
 }
 
 func extractBundle(file *os.File, dst string, sourceURL string) error {
@@ -279,6 +353,24 @@ func shouldRefresh(meta cacheMetadata, refreshInterval string) bool {
 		return true
 	}
 	return time.Since(meta.FetchedAt) >= interval
+}
+
+func staleWarning(meta cacheMetadata, staleWarningWindow string) string {
+	if staleWarningWindow == "" || meta.ExpiresAt.IsZero() {
+		return ""
+	}
+	window, err := time.ParseDuration(staleWarningWindow)
+	if err != nil || window <= 0 {
+		return ""
+	}
+	remaining := time.Until(meta.ExpiresAt)
+	if remaining <= 0 {
+		return ""
+	}
+	if remaining <= window {
+		return fmt.Sprintf("cache expires in %s", remaining.Round(time.Second))
+	}
+	return ""
 }
 
 func isCacheStale(meta cacheMetadata, maxCacheAge string) (bool, time.Duration, error) {

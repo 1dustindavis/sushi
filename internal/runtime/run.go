@@ -1,10 +1,12 @@
 package runtime
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"time"
 )
 
 type RunRequest struct {
@@ -13,6 +15,10 @@ type RunRequest struct {
 	RunListFile        string
 	JSONAttributesFile string
 	LockFile           string
+	LockWaitTimeout    time.Duration
+	LockPollInterval   time.Duration
+	LockStaleAge       time.Duration
+	ConvergeTimeout    time.Duration
 }
 
 func ExecuteLocalMode(req RunRequest) error {
@@ -25,7 +31,7 @@ func ExecuteLocalMode(req RunRequest) error {
 
 	releaseLock := func() {}
 	if req.LockFile != "" {
-		release, err := acquireLock(req.LockFile)
+		release, err := acquireLock(req.LockFile, req.LockWaitTimeout, req.LockPollInterval, req.LockStaleAge)
 		if err != nil {
 			return err
 		}
@@ -54,30 +60,66 @@ func ExecuteLocalMode(req RunRequest) error {
 		args = append(args, "-j", jsonInput)
 	}
 
-	cmd := exec.Command(req.ClientBinary, args...)
+	ctx := context.Background()
+	if req.ConvergeTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, req.ConvergeTimeout)
+		defer cancel()
+	}
+
+	cmd := exec.CommandContext(ctx, req.ClientBinary, args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
 	if err := cmd.Run(); err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return fmt.Errorf("execute converge: timed out after %s", req.ConvergeTimeout)
+		}
 		return fmt.Errorf("execute converge: %w", err)
 	}
 	return nil
 }
 
-func acquireLock(path string) (func(), error) {
+func acquireLock(path string, waitTimeout time.Duration, pollInterval time.Duration, staleAge time.Duration) (func(), error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, fmt.Errorf("prepare lock directory: %w", err)
 	}
-	lock, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
-	if err != nil {
-		if os.IsExist(err) {
+	if pollInterval <= 0 {
+		pollInterval = 250 * time.Millisecond
+	}
+
+	deadline := time.Now().Add(waitTimeout)
+	for {
+		lock, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+		if err == nil {
+			if _, writeErr := lock.WriteString(fmt.Sprintf("pid=%d\nacquired_at=%s\n", os.Getpid(), time.Now().UTC().Format(time.RFC3339Nano))); writeErr != nil {
+				_ = lock.Close()
+				_ = os.Remove(path)
+				return nil, fmt.Errorf("initialize lock file: %w", writeErr)
+			}
+			_ = lock.Close()
+			return func() {
+				_ = os.Remove(path)
+			}, nil
+		}
+
+		if !os.IsExist(err) {
+			return nil, fmt.Errorf("create lock file: %w", err)
+		}
+
+		if staleAge > 0 {
+			if info, statErr := os.Stat(path); statErr == nil {
+				if time.Since(info.ModTime()) > staleAge {
+					if removeErr := os.Remove(path); removeErr == nil || os.IsNotExist(removeErr) {
+						continue
+					}
+				}
+			}
+		}
+
+		if waitTimeout <= 0 || time.Now().After(deadline) {
 			return nil, fmt.Errorf("lock file already exists: %s", path)
 		}
-		return nil, fmt.Errorf("create lock file: %w", err)
+		time.Sleep(pollInterval)
 	}
-	_ = lock.Close()
-
-	return func() {
-		_ = os.Remove(path)
-	}, nil
 }
