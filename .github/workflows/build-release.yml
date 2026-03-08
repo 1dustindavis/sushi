@@ -26,20 +26,6 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Build release artifacts
-        run: |
-          mkdir -p dist
-
-          for target in linux/amd64 darwin/amd64 darwin/arm64 windows/amd64; do
-            IFS='/' read -r goos goarch <<< "$target"
-            output="sushi-${goos}-${goarch}"
-            if [ "$goos" = "windows" ]; then
-              output="${output}.exe"
-            fi
-
-            GOOS="$goos" GOARCH="$goarch" CGO_ENABLED=0 go build -o "dist/${output}" ./cmd/sushi
-          done
-
       - name: Determine next version
         id: next_version
         run: |
@@ -53,6 +39,23 @@ jobs:
           fi
 
           echo "next_tag=$next_tag" >> "$GITHUB_OUTPUT"
+
+      - name: Build release artifacts
+        run: |
+          mkdir -p dist
+
+          version="${{ steps.next_version.outputs.next_tag }}"
+
+          for target in linux/amd64 darwin/amd64 darwin/arm64 windows/amd64; do
+            IFS='/' read -r goos goarch <<< "$target"
+            output="sushi-${version}-${goos}-${goarch}"
+            if [ "$goos" = "windows" ]; then
+              output="${output}.exe"
+            fi
+
+            GOOS="$goos" GOARCH="$goarch" CGO_ENABLED=0 \
+              go build -ldflags "-X main.version=${version}" -o "dist/${output}" ./cmd/sushi
+          done
 
       - name: Create and push tag
         run: |

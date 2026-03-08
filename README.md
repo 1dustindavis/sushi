@@ -13,6 +13,8 @@ For remote sources, `allow_insecure` and `skip_checksum` are explicit safety tog
 - `sushi run -config <path>`: resolves source order and executes converge flow.
 - `sushi doctor -config <path>`: validates config, binary discovery, and source resolution.
 - `sushi print-plan -config <path>`: prints source selection decisions without converging.
+- `sushi version`: prints the build version (defaults to `dev` unless set at build time).
+- `sushi help`: prints command usage.
 
 ## Currently implemented
 
