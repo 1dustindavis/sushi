@@ -118,12 +118,16 @@ func installWindowsService(configPath string) error {
 		return fmt.Errorf("resolve executable path: %w", err)
 	}
 
-	binPath := fmt.Sprintf("\"%s\" service run -config \"%s\"", exePath, configPath)
-	if err := runSC("create", windowsServiceName, fmt.Sprintf("binPath= %s", binPath), "start= auto", "DisplayName= sushi"); err != nil {
+	if err := runSC(buildWindowsServiceCreateArgs(exePath, configPath)...); err != nil {
 		return err
 	}
 	_ = runSC("description", windowsServiceName, "sushi local-first converge service")
 	return nil
+}
+
+func buildWindowsServiceCreateArgs(exePath, configPath string) []string {
+	binPath := fmt.Sprintf("\"%s\" service run -config \"%s\"", exePath, configPath)
+	return []string{"create", windowsServiceName, "binPath=", binPath, "start=", "auto", "DisplayName=", "sushi"}
 }
 
 func runSC(args ...string) error {
