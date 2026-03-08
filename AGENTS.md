@@ -16,5 +16,7 @@
 - Core packages live under `internal/` (`config`, `runtime`, `source`, `logging`).
 - Run formatting and tests before committing:
   - `gofmt -w .`
-  - `go test ./...`
-- CI runs `go test ./...` on all three OS targets; avoid introducing OS-specific breakage.
+  - `make test`
+  - `go test ./...` (optional quick rerun for focused iteration)
+- Prefer `make test` before committing so race and coverage checks run consistently.
+- CI runs test suites with `go test -race -cover` on all three OS targets; avoid introducing OS-specific breakage.

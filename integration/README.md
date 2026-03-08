@@ -55,6 +55,12 @@ From repository root:
 go test ./integration -run TestIntegration -v
 ```
 
+Or run everything with race + coverage (recommended before commit):
+
+```bash
+make test
+```
+
 Or run the full suite:
 
 ```bash
@@ -65,6 +71,6 @@ go test ./...
 
 Integration tests run in GitHub Actions via:
 
-- `.github/workflows/integration.yml`
+- `.github/workflows/integration-tests.yml`
 
 The workflow runs on a multi-OS matrix for every push.
