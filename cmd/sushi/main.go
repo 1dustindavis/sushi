@@ -15,6 +15,7 @@ import (
 const defaultConfigPath = "./config.json"
 
 var logger = logging.MustNewDefault(os.Stderr)
+var version = "dev"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -31,6 +32,8 @@ func main() {
 		exitOnErr(doctor(os.Args[2:]))
 	case "print-plan":
 		exitOnErr(printPlan(os.Args[2:]))
+	case "version":
+		printVersion()
 	case "help", "-h", "--help":
 		printUsage()
 	default:
@@ -162,4 +165,10 @@ func printUsage() {
 	fmt.Println("  run         resolve source and run converge")
 	fmt.Println("  doctor      validate environment and config")
 	fmt.Println("  print-plan  print source resolution decisions")
+	fmt.Println("  version     print build version")
+	fmt.Println("  help        print this usage information")
+}
+
+func printVersion() {
+	fmt.Println(version)
 }
