@@ -79,3 +79,22 @@ func TestExecuteChefServerModeRequiresExistingClientRB(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
+
+func TestAcquireLockReleaseDoesNotRemoveReplacedLock(t *testing.T) {
+	lockPath := filepath.Join(t.TempDir(), "sushi.lock")
+	release, err := acquireLock(lockPath, 0, 10*time.Millisecond, 0)
+	if err != nil {
+		t.Fatalf("acquire first lock: %v", err)
+	}
+	if err := os.WriteFile(lockPath, []byte("pid=999\nlock_id=replacement\n"), 0o644); err != nil {
+		t.Fatalf("replace lock file: %v", err)
+	}
+	release()
+	bytes, err := os.ReadFile(lockPath)
+	if err != nil {
+		t.Fatalf("expected lock file to remain: %v", err)
+	}
+	if !strings.Contains(string(bytes), "lock_id=replacement") {
+		t.Fatalf("expected replacement lock to remain, got %q", string(bytes))
+	}
+}

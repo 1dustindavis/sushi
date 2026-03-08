@@ -51,6 +51,14 @@ func (e *RemoteUnavailableError) Unwrap() error {
 }
 
 func ResolveRemote(src config.RemoteSource) (*RemoteResult, error) {
+	return resolveRemote(src, false)
+}
+
+func ResolveRemoteReadOnly(src config.RemoteSource) (*RemoteResult, error) {
+	return resolveRemote(src, true)
+}
+
+func resolveRemote(src config.RemoteSource, readOnly bool) (*RemoteResult, error) {
 	if err := validateRemoteSecurityPolicy(src); err != nil {
 		return nil, err
 	}
@@ -63,6 +71,17 @@ func ResolveRemote(src config.RemoteSource) (*RemoteResult, error) {
 			reason = reason + "; " + warning
 		}
 		return &RemoteResult{CookbookPath: bundlePath, Digest: meta.Digest, Reason: reason}, nil
+	}
+
+	if readOnly {
+		inspected, inspectErr := inspectRemoteReadOnly(src, meta, bundlePath)
+		if inspectErr == nil {
+			return inspected, nil
+		}
+		if unavailable := (&RemoteUnavailableError{Err: inspectErr}); errors.As(inspectErr, &unavailable) {
+			return nil, inspectErr
+		}
+		return nil, &RemoteUnavailableError{Err: inspectErr}
 	}
 
 	fetched, fetchErr := fetchAndActivateRemote(src, meta)
@@ -92,13 +111,59 @@ func ResolveRemote(src config.RemoteSource) (*RemoteResult, error) {
 	return &RemoteResult{CookbookPath: bundlePath, Digest: meta.Digest, Reason: reason}, nil
 }
 
+func inspectRemoteReadOnly(src config.RemoteSource, meta *cacheMetadata, bundlePath string) (*RemoteResult, error) {
+	fetchResult, fetchErr := downloadBundleWithRetry(src, meta)
+	if fetchErr != nil {
+		if !src.AllowCachedFallback || meta == nil {
+			return nil, &RemoteUnavailableError{Err: fmt.Errorf("read-only remote fetch failed: %v", fetchErr)}
+		}
+		stale, age, staleErr := isCacheStale(*meta, src.MaxCacheAge)
+		if staleErr != nil {
+			return nil, &RemoteUnavailableError{Err: fmt.Errorf("read-only fetch failed and cache policy invalid: %v", staleErr)}
+		}
+		if stale && src.FailIfStale {
+			return nil, &RemoteUnavailableError{Err: fmt.Errorf("read-only fetch failed and cache is stale (%s old): %v", age.Round(time.Second), fetchErr), StaleCacheViolation: true}
+		}
+		reason := fmt.Sprintf("using cached fallback after read-only fetch failure (%v)", fetchErr)
+		if stale {
+			reason = fmt.Sprintf("using stale cached fallback (%s old) after read-only fetch failure (%v)", age.Round(time.Second), fetchErr)
+		}
+		return &RemoteResult{CookbookPath: bundlePath, Digest: meta.Digest, Reason: reason}, nil
+	}
+
+	if fetchResult.notModified {
+		if meta == nil {
+			return nil, &RemoteUnavailableError{Err: errors.New("remote returned not modified but cache metadata is missing")}
+		}
+		return &RemoteResult{CookbookPath: bundlePath, Digest: meta.Digest, Reason: "remote unchanged (HTTP 304); cache remains active"}, nil
+	}
+
+	if src.ChecksumURL != "" {
+		expected, err := fetchExpectedChecksum(src)
+		if err != nil {
+			return nil, &RemoteUnavailableError{Err: err}
+		}
+		if !strings.EqualFold(expected, fetchResult.digest) {
+			return nil, &RemoteUnavailableError{Err: fmt.Errorf("checksum mismatch: expected %s got %s", expected, fetchResult.digest)}
+		}
+	}
+
+	return &RemoteResult{Digest: fetchResult.digest, Reason: "remote bundle verified (read-only inspection; cache not activated)"}, nil
+}
+
 func FetchRemote(src config.RemoteSource) (*RemoteResult, error) {
 	meta, bundlePath, _ := loadCurrentMetadata(src.CacheDir)
 	fetched, err := fetchAndActivateRemote(src, meta)
 	if err != nil {
 		if meta != nil && src.AllowCachedFallback {
 			stale, age, staleErr := isCacheStale(*meta, src.MaxCacheAge)
-			if staleErr == nil && (!stale || !src.FailIfStale) {
+			if staleErr != nil {
+				return nil, &RemoteUnavailableError{Err: fmt.Errorf("fetch failed and cache policy invalid: %v", staleErr)}
+			}
+			if stale && src.FailIfStale {
+				return nil, &RemoteUnavailableError{Err: fmt.Errorf("fetch failed and cache is stale (%s old): %v", age.Round(time.Second), err), StaleCacheViolation: true}
+			}
+			if !stale || !src.FailIfStale {
 				reason := fmt.Sprintf("using cached fallback after fetch failure (%v)", err)
 				if stale {
 					reason = fmt.Sprintf("using stale cached fallback (%s old) after fetch failure (%v)", age.Round(time.Second), err)
@@ -505,6 +570,9 @@ func staleWarning(meta cacheMetadata, staleWarningWindow string) string {
 
 func isCacheStale(meta cacheMetadata, maxCacheAge string) (bool, time.Duration, error) {
 	age := time.Since(meta.FetchedAt)
+	if !meta.ExpiresAt.IsZero() && time.Now().After(meta.ExpiresAt) {
+		return true, age, nil
+	}
 	if maxCacheAge == "" {
 		return false, age, nil
 	}

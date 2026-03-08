@@ -77,6 +77,12 @@ func fetch(args []string) error {
 	if err != nil {
 		return classifyLoadConfigErr(err)
 	}
+	releaseLock, err := acquireExecutionLock(cfg)
+	if err != nil {
+		return err
+	}
+	defer releaseLock()
+
 	if !cfg.Sources.Remote.Enabled {
 		return fmt.Errorf("%w: remote source is disabled", runtime.ErrSourceUnavailable)
 	}
@@ -106,7 +112,12 @@ func runWithConfig(cfg *config.Config) error {
 		return fmt.Errorf("%w: %v", runtime.ErrDependencyMissing, err)
 	}
 
+	releaseLock, err := acquireExecutionLock(cfg)
+	if err != nil {
+		return err
+	}
 	resolution, err := source.ResolveWithCandidates(cfg)
+	releaseLock()
 	if err != nil {
 		return classifySourceResolutionErr(err)
 	}
@@ -196,7 +207,7 @@ func doctor(args []string) error {
 		fmt.Printf("client discovery: OK (%s)\n", client)
 	}
 
-	plan, planErr := source.Resolve(cfg)
+	plan, planErr := source.ResolveForInspection(cfg)
 	if planErr != nil {
 		logger.Warn("doctor source resolution failed", "error", planErr)
 		fmt.Printf("source resolution: FAIL (%v)\n", planErr)
@@ -222,8 +233,14 @@ func printPlan(args []string) error {
 		return classifyLoadConfigErr(err)
 	}
 
-	plan, err := source.Resolve(cfg)
+	plan, err := source.ResolveForInspection(cfg)
 	if err != nil {
+		var resolutionErr *source.ResolutionError
+		if errors.As(err, &resolutionErr) {
+			for _, decision := range resolutionErr.Decisions {
+				fmt.Printf("- %s: %s\n", decision.Source, decision.Reason)
+			}
+		}
 		return classifySourceResolutionErr(err)
 	}
 
@@ -242,6 +259,30 @@ func printPlan(args []string) error {
 		fmt.Printf("- %s: %s\n", decision.Source, decision.Reason)
 	}
 	return nil
+}
+
+func acquireExecutionLock(cfg *config.Config) (func(), error) {
+	if cfg.Execution.LockFile == "" {
+		return func() {}, nil
+	}
+
+	lockWaitTimeout, err := parseOptionalDuration(cfg.Execution.LockWaitTimeout)
+	if err != nil {
+		return nil, fmt.Errorf("parse execution.lock_wait_timeout: %w", err)
+	}
+	lockPollInterval, err := parseOptionalDuration(cfg.Execution.LockPollInterval)
+	if err != nil {
+		return nil, fmt.Errorf("parse execution.lock_poll_interval: %w", err)
+	}
+	lockStaleAge, err := parseOptionalDuration(cfg.Execution.LockStaleAge)
+	if err != nil {
+		return nil, fmt.Errorf("parse execution.lock_stale_age: %w", err)
+	}
+	releaseLock, err := runtime.AcquireLock(cfg.Execution.LockFile, lockWaitTimeout, lockPollInterval, lockStaleAge)
+	if err != nil {
+		return nil, err
+	}
+	return releaseLock, nil
 }
 
 func loadConfig(args []string) (*config.Config, error) {
