@@ -1,0 +1,8 @@
+[Unit]
+Description=sushi converge run
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/sushi run -config /etc/sushi/config.json

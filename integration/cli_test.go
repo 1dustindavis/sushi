@@ -69,6 +69,37 @@ func TestIntegration(t *testing.T) {
 		}
 	})
 
+	t.Run("run retries next source on retryable converge failure", func(t *testing.T) {
+		clientRB := filepath.Join(t.TempDir(), "client.rb")
+		if err := os.WriteFile(clientRB, []byte("chef_server_url 'https://chef.example.com'\n"), 0o644); err != nil {
+			t.Fatalf("write client.rb: %v", err)
+		}
+		cfg := testConfig{}
+		cfg.Runtime.ClientBinary = fakeClient
+		cfg.SourceOrder = []string{"chef_server", "local"}
+		cfg.Sources.ChefServer.Enabled = true
+		cfg.Sources.ChefServer.ClientRB = clientRB
+		cfg.Sources.Local.Enabled = true
+		cfg.Sources.Local.CookbookPath = filepath.Join(repoRoot, "integration", "testdata", "local-cookbooks")
+		cfgPath := writeConfig(t, cfg)
+
+		marker := filepath.Join(t.TempDir(), "fail-once", "marker")
+		out, err := runSushiWithEnv(t, repoRoot, "run", cfgPath, capturePath, []string{"SUSHI_FAKE_CLIENT_FAIL_ONCE=" + marker})
+		if err != nil {
+			t.Fatalf("expected fallback run success: %v\n%s", err, out)
+		}
+		if !strings.Contains(out, "attempting next source after retryable converge failure") {
+			t.Fatalf("expected retryable fallback log, got\n%s", out)
+		}
+		args, readErr := os.ReadFile(capturePath)
+		if readErr != nil {
+			t.Fatalf("read capture args: %v", readErr)
+		}
+		if !strings.Contains(string(args), "-z") {
+			t.Fatalf("expected local fallback to use -z, args=%s", args)
+		}
+	})
+
 	t.Run("remote matrix", func(t *testing.T) {
 		for _, tc := range remoteCases(t) {
 			tc := tc
@@ -255,9 +286,14 @@ func remoteCases(t *testing.T) []remoteCase {
 
 func runSushi(t *testing.T, root, command, cfgPath, capturePath string) (string, error) {
 	t.Helper()
+	return runSushiWithEnv(t, root, command, cfgPath, capturePath, nil)
+}
+
+func runSushiWithEnv(t *testing.T, root, command, cfgPath, capturePath string, extraEnv []string) (string, error) {
+	t.Helper()
 	cmd := exec.Command("go", "run", "./cmd/sushi", command, "-config", cfgPath)
 	cmd.Dir = root
-	cmd.Env = append(os.Environ(), "SUSHI_FAKE_CLIENT_CAPTURE="+capturePath)
+	cmd.Env = append(os.Environ(), append([]string{"SUSHI_FAKE_CLIENT_CAPTURE=" + capturePath}, extraEnv...)...)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
