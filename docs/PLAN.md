@@ -289,9 +289,21 @@ Phase 3 optional Chef Server integration is now complete: deterministic `chef_se
 ### Phase 4 — operations polish
 
 - Packaging and installation docs for Linux/macOS/Windows.
-- Publish systemd/launchd example configs and native Windows Service configuration guidance.
+- Publish systemd/launchd example configs and implement native Windows Service support in `sushi` (with configuration + Event Log guidance).
+- Alias bare `sushi` invocation to `sushi run` to preserve ergonomic default behavior for operators.
+- Implement reasonable platform-specific default `config.json` and logging locations for Linux, macOS, and Windows.
+- Capture `chef-client`/`cinc-client` output and conditionally attempt the next source in `source_order` when failures match a documented retryable exception list.
 - Add daemon behavior test harness and operational runbooks.
 - Telemetry hooks and richer diagnostics.
+
+### Phase 5 — plan/code reconciliation gaps
+
+Items below were identified by reviewing plan claims against the current codebase and should be tracked explicitly before declaring broader completion:
+
+- [ ] Add the `sushi fetch` CLI subcommand described in the plan (`run`, `doctor`, `print-plan`, and `version` are currently implemented).
+- [ ] Implement distinct operational exit codes (current command failures collapse to a generic non-zero exit status).
+- [ ] Add service/daemon artifacts and smoke coverage promised in the plan (systemd/launchd examples and native Windows Service implementation/tests are not yet present in the repository).
+- [ ] Add runtime output-capture + retryable exception handling to conditionally try the next source after converge-time failures.
 
 ---
 
