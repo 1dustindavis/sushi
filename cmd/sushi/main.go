@@ -9,12 +9,22 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"sushi/internal/config"
 	"sushi/internal/logging"
 	"sushi/internal/runtime"
 	"sushi/internal/source"
+)
+
+const (
+	exitCodeConfigInvalid      = 10
+	exitCodeDependencyMissing  = 11
+	exitCodeSourceUnavailable  = 12
+	exitCodeStaleCachePolicy   = 13
+	exitCodeConvergeFailed     = 14
+	exitCodeUnknownOperational = 1
 )
 
 var logger = newLogger()
@@ -33,6 +43,8 @@ func main() {
 		exitOnErr(run(os.Args[2:]))
 	case "doctor":
 		exitOnErr(doctor(os.Args[2:]))
+	case "fetch":
+		exitOnErr(fetch(os.Args[2:]))
 	case "print-plan":
 		exitOnErr(printPlan(os.Args[2:]))
 	case "version":
@@ -55,20 +67,48 @@ func main() {
 func run(args []string) error {
 	cfg, err := loadConfig(args)
 	if err != nil {
-		return err
+		return classifyLoadConfigErr(err)
 	}
 	return runWithConfig(cfg)
+}
+
+func fetch(args []string) error {
+	cfg, err := loadConfig(args)
+	if err != nil {
+		return classifyLoadConfigErr(err)
+	}
+	if !cfg.Sources.Remote.Enabled {
+		return fmt.Errorf("%w: remote source is disabled", runtime.ErrSourceUnavailable)
+	}
+	result, err := source.FetchRemote(cfg.Sources.Remote)
+	if err != nil {
+		var remoteUnavailable *source.RemoteUnavailableError
+		if errors.As(err, &remoteUnavailable) {
+			if remoteUnavailable.StaleCacheViolation {
+				return fmt.Errorf("%w: %v", runtime.ErrStaleCachePolicy, err)
+			}
+			return fmt.Errorf("%w: %v", runtime.ErrSourceUnavailable, err)
+		}
+		return err
+	}
+	logger.Info("fetch completed", "cookbook_path", result.CookbookPath, "bundle_digest", result.Digest, "reason", result.Reason)
+	fmt.Printf("fetch result: %s\n", result.Reason)
+	fmt.Printf("cookbook path: %s\n", result.CookbookPath)
+	if result.Digest != "" {
+		fmt.Printf("bundle digest: %s\n", result.Digest)
+	}
+	return nil
 }
 
 func runWithConfig(cfg *config.Config) error {
 	client, err := runtime.DiscoverClientBinary(cfg.Runtime.ClientBinary)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %v", runtime.ErrDependencyMissing, err)
 	}
 
 	resolution, err := source.ResolveWithCandidates(cfg)
 	if err != nil {
-		return err
+		return classifySourceResolutionErr(err)
 	}
 	plan := resolution.Plan
 
@@ -125,7 +165,7 @@ func runWithConfig(cfg *config.Config) error {
 		retryable := runtime.IsRetryableConvergeFailure(attemptErr, runtime.DefaultRetryableExceptions)
 		logger.Error("converge failed", "selected_mode", candidate.Source, "attempt_index", idx, "converge_latency_ms", latency.Milliseconds(), "retryable_failure", retryable, "error", attemptErr)
 		if !retryable || idx == len(resolution.Candidates)-1 {
-			return attemptErr
+			return fmt.Errorf("%w: %v", runtime.ErrConvergeFailure, attemptErr)
 		}
 		logger.Warn("attempting next source after retryable converge failure", "failed_mode", candidate.Source, "next_mode", resolution.Candidates[idx+1].Source)
 	}
@@ -144,7 +184,7 @@ func executeCandidate(selected string, req runtime.RunRequest) error {
 func doctor(args []string) error {
 	cfg, err := loadConfig(args)
 	if err != nil {
-		return err
+		return classifyLoadConfigErr(err)
 	}
 
 	client, clientErr := runtime.DiscoverClientBinary(cfg.Runtime.ClientBinary)
@@ -166,7 +206,10 @@ func doctor(args []string) error {
 	}
 
 	if clientErr != nil || planErr != nil {
-		return errors.New("doctor checks failed")
+		if clientErr != nil {
+			return fmt.Errorf("%w: doctor checks failed", runtime.ErrDependencyMissing)
+		}
+		return fmt.Errorf("%w: doctor checks failed", runtime.ErrSourceUnavailable)
 	}
 
 	fmt.Println("doctor checks passed")
@@ -176,12 +219,12 @@ func doctor(args []string) error {
 func printPlan(args []string) error {
 	cfg, err := loadConfig(args)
 	if err != nil {
-		return err
+		return classifyLoadConfigErr(err)
 	}
 
 	plan, err := source.Resolve(cfg)
 	if err != nil {
-		return err
+		return classifySourceResolutionErr(err)
 	}
 
 	logger.Info("print-plan resolved", "selected_mode", plan.Selected, "decision_count", len(plan.Decisions), "cookbook_path", plan.SelectedCookbook, "bundle_digest", plan.BundleDigest)
@@ -236,7 +279,7 @@ func exitOnErr(err error) {
 	}
 	logger.Error("command failed", "error", err)
 	fmt.Fprintf(os.Stderr, "error: %v\n", err)
-	os.Exit(1)
+	os.Exit(mapExitCode(err))
 }
 
 func printUsage() {
@@ -246,6 +289,7 @@ func printUsage() {
 	fmt.Println("Commands:")
 	fmt.Println("  run         resolve source and run converge")
 	fmt.Println("  doctor      validate environment and config")
+	fmt.Println("  fetch       prefetch/verify/activate remote bundle")
 	fmt.Println("  print-plan  print source resolution decisions")
 	fmt.Println("  version     print build version")
 	fmt.Println("  service     manage native Windows service operations (Windows only)")
@@ -258,6 +302,42 @@ func printVersion() {
 
 func isFlag(value string) bool {
 	return len(value) > 1 && value[0] == '-'
+}
+
+func classifyLoadConfigErr(err error) error {
+	var validationErr config.ValidationError
+	if errors.As(err, &validationErr) {
+		return fmt.Errorf("%w: %v", runtime.ErrConfigInvalid, err)
+	}
+	if strings.Contains(err.Error(), "read config") || strings.Contains(err.Error(), "parse config JSON") {
+		return fmt.Errorf("%w: %v", runtime.ErrConfigInvalid, err)
+	}
+	return err
+}
+
+func classifySourceResolutionErr(err error) error {
+	var resolutionErr *source.ResolutionError
+	if errors.As(err, &resolutionErr) && resolutionErr.StaleCacheViolation {
+		return fmt.Errorf("%w: %v", runtime.ErrStaleCachePolicy, err)
+	}
+	return fmt.Errorf("%w: %v", runtime.ErrSourceUnavailable, err)
+}
+
+func mapExitCode(err error) int {
+	switch {
+	case errors.Is(err, runtime.ErrConfigInvalid):
+		return exitCodeConfigInvalid
+	case errors.Is(err, runtime.ErrDependencyMissing):
+		return exitCodeDependencyMissing
+	case errors.Is(err, runtime.ErrSourceUnavailable):
+		return exitCodeSourceUnavailable
+	case errors.Is(err, runtime.ErrStaleCachePolicy):
+		return exitCodeStaleCachePolicy
+	case errors.Is(err, runtime.ErrConvergeFailure):
+		return exitCodeConvergeFailed
+	default:
+		return exitCodeUnknownOperational
+	}
 }
 
 func newLogger() *slog.Logger {

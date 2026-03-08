@@ -72,7 +72,7 @@ func TestFetchAndActivateRemoteChecksumAndCompression(t *testing.T) {
 
 	t.Run("good checksum", func(t *testing.T) {
 		src := config.RemoteSource{URL: server.URL + "/bundle.tar.gz", ChecksumURL: server.URL + "/checksum.good", AllowInsecure: true, CacheDir: filepath.Join(t.TempDir(), "cache")}
-		got, err := fetchAndActivateRemote(src)
+		got, err := fetchAndActivateRemote(src, nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -83,7 +83,7 @@ func TestFetchAndActivateRemoteChecksumAndCompression(t *testing.T) {
 
 	t.Run("bad checksum", func(t *testing.T) {
 		src := config.RemoteSource{URL: server.URL + "/bundle.tar.gz", ChecksumURL: server.URL + "/checksum.bad", AllowInsecure: true, CacheDir: filepath.Join(t.TempDir(), "cache")}
-		_, err := fetchAndActivateRemote(src)
+		_, err := fetchAndActivateRemote(src, nil)
 		if err == nil || !strings.Contains(err.Error(), "checksum mismatch") {
 			t.Fatalf("expected checksum mismatch, got %v", err)
 		}
@@ -93,7 +93,7 @@ func TestFetchAndActivateRemoteChecksumAndCompression(t *testing.T) {
 		path := path
 		t.Run("supports "+path, func(t *testing.T) {
 			src := config.RemoteSource{URL: server.URL + path, AllowInsecure: true, CacheDir: filepath.Join(t.TempDir(), "cache")}
-			got, err := fetchAndActivateRemote(src)
+			got, err := fetchAndActivateRemote(src, nil)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -122,8 +122,60 @@ func TestFetchAndActivateRemoteRetries(t *testing.T) {
 	defer server.Close()
 
 	src := config.RemoteSource{URL: server.URL + "/bundle.tar.gz", AllowInsecure: true, CacheDir: filepath.Join(t.TempDir(), "cache"), FetchRetries: 2, RetryBackoff: "1ms"}
-	if _, err := fetchAndActivateRemote(src); err != nil {
+	if _, err := fetchAndActivateRemote(src, nil); err != nil {
 		t.Fatalf("expected retries to recover, got %v", err)
+	}
+}
+
+func TestFetchRemoteNotModifiedRefreshesMetadata(t *testing.T) {
+	baseTar := makeRemoteTar(t)
+	bundle := compressGzip(t, baseTar)
+
+	cacheDir := filepath.Join(t.TempDir(), "cache")
+	var ifNoneMatch string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/bundle.tar.gz":
+			ifNoneMatch = r.Header.Get("If-None-Match")
+			if ifNoneMatch == `"etag-v1"` {
+				w.WriteHeader(http.StatusNotModified)
+				w.Header().Set("Cache-Control", "max-age=60")
+				return
+			}
+			w.Header().Set("ETag", `"etag-v1"`)
+			w.Header().Set("Last-Modified", time.Now().UTC().Format(http.TimeFormat))
+			_, _ = w.Write(bundle)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	src := config.RemoteSource{URL: server.URL + "/bundle.tar.gz", AllowInsecure: true, CacheDir: cacheDir, RefreshInterval: "0s"}
+	if _, err := FetchRemote(src); err != nil {
+		t.Fatalf("initial fetch failed: %v", err)
+	}
+	result, err := FetchRemote(src)
+	if err != nil {
+		t.Fatalf("second fetch failed: %v", err)
+	}
+	if !strings.Contains(result.Reason, "HTTP 304") {
+		t.Fatalf("expected not-modified reason, got %q", result.Reason)
+	}
+	if ifNoneMatch != `"etag-v1"` {
+		t.Fatalf("expected If-None-Match header, got %q", ifNoneMatch)
+	}
+}
+
+func TestParseCacheControlMaxAge(t *testing.T) {
+	if got := parseCacheControlMaxAge("public, max-age=120"); got != 120*time.Second {
+		t.Fatalf("expected 120s, got %s", got)
+	}
+	if got := parseCacheControlMaxAge("max-age=\"90\""); got != 90*time.Second {
+		t.Fatalf("expected 90s, got %s", got)
+	}
+	if got := parseCacheControlMaxAge("no-cache"); got != 0 {
+		t.Fatalf("expected 0, got %s", got)
 	}
 }
 
