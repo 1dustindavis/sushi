@@ -1,6 +1,6 @@
 # Configuration Reference
 
-This document is a field-by-field reference for the `sushi` JSON configuration file. Use it to understand what each config argument accepts, whether it is required, what default behavior applies when unset, and how it affects `run`, `doctor`, and `print-plan` behavior.
+This document is a field-by-field reference for the `sushi` JSON configuration file. Use it to understand what each config argument accepts, whether it is required, what default behavior applies when unset, and how it affects `run`, `fetch`, `doctor`, and `print-plan` behavior.
 
 ## runtime
 
@@ -42,6 +42,8 @@ Requires checksum verification and enforces presence of `checksum_url`.
 **sources.remote.refresh_interval** *duration string* default: empty (always refresh) required: no  
 Minimum interval before attempting a new remote fetch when cached metadata is present.
 
+When cached metadata has `ETag` or `Last-Modified` values from previous fetches, sushi sends conditional requests and honors HTTP `304 Not Modified` responses by refreshing local metadata timestamps/expiration instead of re-downloading the bundle.
+
 **sources.remote.request_timeout** *duration string* default: `15s` required: no  
 HTTP timeout for remote bundle and checksum fetches.
 
@@ -56,6 +58,8 @@ Directory used for remote bundle cache and metadata. Required when remote source
 
 **sources.remote.max_cache_age** *duration string* default: empty (no max age) required: no  
 Maximum allowed cache age before it is treated as stale.
+
+When upstream responses include `Cache-Control: max-age=<seconds>`, sushi uses that freshness value for cache expiration metadata in preference to local `max_cache_age` for the fetched/confirmed version.
 
 **sources.remote.stale_warning_window** *duration string* default: empty (disabled) required: no  
 Warning window before cache expiry when stale-age metadata exists.

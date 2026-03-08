@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -17,6 +18,13 @@ func main() {
 			_ = os.WriteFile(marker, []byte("failed"), 0o644)
 			fmt.Fprintln(os.Stderr, "connection refused during cookbook sync")
 			os.Exit(1)
+		}
+	}
+	if exitCode := os.Getenv("SUSHI_FAKE_CLIENT_EXIT_CODE"); exitCode != "" {
+		code, err := strconv.Atoi(exitCode)
+		if err == nil && code > 0 {
+			fmt.Fprintln(os.Stderr, "forced fake-client failure")
+			os.Exit(code)
 		}
 	}
 	fmt.Println("fake converge ok")

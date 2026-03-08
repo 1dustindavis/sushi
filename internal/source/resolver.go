@@ -37,6 +37,19 @@ type Resolution struct {
 	Candidates []Candidate
 }
 
+type ResolutionError struct {
+	Err                 error
+	StaleCacheViolation bool
+}
+
+func (e *ResolutionError) Error() string {
+	return e.Err.Error()
+}
+
+func (e *ResolutionError) Unwrap() error {
+	return e.Err
+}
+
 func Resolve(cfg *config.Config) (*Plan, error) {
 	resolution, err := ResolveWithCandidates(cfg)
 	if err != nil {
@@ -48,6 +61,7 @@ func Resolve(cfg *config.Config) (*Plan, error) {
 func ResolveWithCandidates(cfg *config.Config) (*Resolution, error) {
 	plan := &Plan{}
 	var candidates []Candidate
+	staleCacheViolation := false
 	for _, sourceName := range cfg.SourceOrder {
 		switch sourceName {
 		case "local":
@@ -61,6 +75,10 @@ func ResolveWithCandidates(cfg *config.Config) (*Resolution, error) {
 		case "remote":
 			candidate, reason, err := evaluateRemote(cfg)
 			if err != nil {
+				var remoteUnavailable *RemoteUnavailableError
+				if errors.As(err, &remoteUnavailable) && remoteUnavailable.StaleCacheViolation {
+					staleCacheViolation = true
+				}
 				plan.Decisions = append(plan.Decisions, Decision{Source: "remote", Reason: reason})
 				continue
 			}
@@ -81,9 +99,9 @@ func ResolveWithCandidates(cfg *config.Config) (*Resolution, error) {
 
 	if len(candidates) == 0 {
 		if len(plan.Decisions) == 0 {
-			return nil, errors.New("no sources configured")
+			return nil, &ResolutionError{Err: errors.New("no sources configured")}
 		}
-		return nil, fmt.Errorf("no usable source from configured source_order")
+		return nil, &ResolutionError{Err: fmt.Errorf("no usable source from configured source_order"), StaleCacheViolation: staleCacheViolation}
 	}
 
 	selected := candidates[0]

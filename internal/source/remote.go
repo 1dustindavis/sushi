@@ -6,12 +6,14 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -27,10 +29,25 @@ type RemoteResult struct {
 }
 
 type cacheMetadata struct {
-	Digest    string    `json:"digest"`
-	FetchedAt time.Time `json:"fetched_at"`
-	SourceURL string    `json:"source_url"`
-	ExpiresAt time.Time `json:"expires_at,omitempty"`
+	Digest       string    `json:"digest"`
+	FetchedAt    time.Time `json:"fetched_at"`
+	SourceURL    string    `json:"source_url"`
+	ExpiresAt    time.Time `json:"expires_at,omitempty"`
+	ETag         string    `json:"etag,omitempty"`
+	LastModified string    `json:"last_modified,omitempty"`
+}
+
+type RemoteUnavailableError struct {
+	Err                 error
+	StaleCacheViolation bool
+}
+
+func (e *RemoteUnavailableError) Error() string {
+	return e.Err.Error()
+}
+
+func (e *RemoteUnavailableError) Unwrap() error {
+	return e.Err
 }
 
 func ResolveRemote(src config.RemoteSource) (*RemoteResult, error) {
@@ -48,13 +65,13 @@ func ResolveRemote(src config.RemoteSource) (*RemoteResult, error) {
 		return &RemoteResult{CookbookPath: bundlePath, Digest: meta.Digest, Reason: reason}, nil
 	}
 
-	fetched, fetchErr := fetchAndActivateRemote(src)
+	fetched, fetchErr := fetchAndActivateRemote(src, meta)
 	if fetchErr == nil {
-		return &RemoteResult{CookbookPath: fetched.bundlePath, Digest: fetched.meta.Digest, Reason: "fetched and activated remote bundle"}, nil
+		return &RemoteResult{CookbookPath: fetched.bundlePath, Digest: fetched.meta.Digest, Reason: fetched.reason}, nil
 	}
 
 	if !src.AllowCachedFallback || meta == nil {
-		return nil, fmt.Errorf("remote fetch failed: %v", fetchErr)
+		return nil, &RemoteUnavailableError{Err: fmt.Errorf("remote fetch failed: %v", fetchErr)}
 	}
 
 	stale, age, staleErr := isCacheStale(*meta, src.MaxCacheAge)
@@ -62,7 +79,7 @@ func ResolveRemote(src config.RemoteSource) (*RemoteResult, error) {
 		return nil, fmt.Errorf("remote fetch failed and cache policy invalid: %v", staleErr)
 	}
 	if stale && src.FailIfStale {
-		return nil, fmt.Errorf("remote fetch failed and cache is stale (%s old): %v", age.Round(time.Second), fetchErr)
+		return nil, &RemoteUnavailableError{Err: fmt.Errorf("remote fetch failed and cache is stale (%s old): %v", age.Round(time.Second), fetchErr), StaleCacheViolation: true}
 	}
 
 	reason := fmt.Sprintf("using cached fallback after fetch failure (%v)", fetchErr)
@@ -75,9 +92,32 @@ func ResolveRemote(src config.RemoteSource) (*RemoteResult, error) {
 	return &RemoteResult{CookbookPath: bundlePath, Digest: meta.Digest, Reason: reason}, nil
 }
 
+func FetchRemote(src config.RemoteSource) (*RemoteResult, error) {
+	meta, bundlePath, _ := loadCurrentMetadata(src.CacheDir)
+	fetched, err := fetchAndActivateRemote(src, meta)
+	if err != nil {
+		if meta != nil && src.AllowCachedFallback {
+			stale, age, staleErr := isCacheStale(*meta, src.MaxCacheAge)
+			if staleErr == nil && (!stale || !src.FailIfStale) {
+				reason := fmt.Sprintf("using cached fallback after fetch failure (%v)", err)
+				if stale {
+					reason = fmt.Sprintf("using stale cached fallback (%s old) after fetch failure (%v)", age.Round(time.Second), err)
+				}
+				return &RemoteResult{CookbookPath: bundlePath, Digest: meta.Digest, Reason: reason}, nil
+			}
+		}
+		if unavailable := (&RemoteUnavailableError{Err: err}); errors.As(err, &unavailable) {
+			return nil, err
+		}
+		return nil, &RemoteUnavailableError{Err: err}
+	}
+	return &RemoteResult{CookbookPath: fetched.bundlePath, Digest: fetched.meta.Digest, Reason: fetched.reason}, nil
+}
+
 type fetchedRemote struct {
 	meta       cacheMetadata
 	bundlePath string
+	reason     string
 }
 
 func validateRemoteSecurityPolicy(src config.RemoteSource) error {
@@ -121,7 +161,7 @@ func validateRemoteSecurityPolicy(src config.RemoteSource) error {
 	return nil
 }
 
-func fetchAndActivateRemote(src config.RemoteSource) (*fetchedRemote, error) {
+func fetchAndActivateRemote(src config.RemoteSource, currentMeta *cacheMetadata) (*fetchedRemote, error) {
 	if err := validateRemoteSecurityPolicy(src); err != nil {
 		return nil, err
 	}
@@ -137,10 +177,33 @@ func fetchAndActivateRemote(src config.RemoteSource) (*fetchedRemote, error) {
 	defer os.Remove(tmpFile.Name())
 	defer tmpFile.Close()
 
-	bundleBytes, computedDigest, err := downloadBundleWithRetry(src)
+	fetchResult, err := downloadBundleWithRetry(src, currentMeta)
 	if err != nil {
 		return nil, err
 	}
+	if fetchResult.notModified {
+		if currentMeta == nil {
+			return nil, fmt.Errorf("remote returned not modified but cache metadata is missing")
+		}
+		meta := *currentMeta
+		meta.FetchedAt = time.Now().UTC()
+		meta.SourceURL = src.URL
+		meta.ExpiresAt = resolveExpiresAt(src, meta.FetchedAt, fetchResult.cacheControl)
+		if fetchResult.etag != "" {
+			meta.ETag = fetchResult.etag
+		}
+		if fetchResult.lastModified != "" {
+			meta.LastModified = fetchResult.lastModified
+		}
+		written, writeErr := writeCurrentMetadata(src.CacheDir, meta)
+		if writeErr != nil {
+			return nil, writeErr
+		}
+		bundlePath := filepath.Join(src.CacheDir, "bundles", written.Digest, "cookbooks")
+		return &fetchedRemote{meta: *written, bundlePath: bundlePath, reason: "remote unchanged (HTTP 304); refreshed cache metadata"}, nil
+	}
+	bundleBytes := fetchResult.body
+	computedDigest := fetchResult.digest
 	if _, err := tmpFile.Write(bundleBytes); err != nil {
 		return nil, fmt.Errorf("write bundle: %w", err)
 	}
@@ -157,11 +220,11 @@ func fetchAndActivateRemote(src config.RemoteSource) (*fetchedRemote, error) {
 	bundleRoot := filepath.Join(src.CacheDir, "bundles", computedDigest)
 	cookbookPath := filepath.Join(bundleRoot, "cookbooks")
 	if _, err := os.Stat(cookbookPath); err == nil {
-		meta, err := writeCurrentMetadata(src.CacheDir, cacheMetadataFromDigest(src, computedDigest))
+		meta, err := writeCurrentMetadata(src.CacheDir, cacheMetadataFromFetch(src, computedDigest, fetchResult))
 		if err != nil {
 			return nil, err
 		}
-		return &fetchedRemote{meta: *meta, bundlePath: cookbookPath}, nil
+		return &fetchedRemote{meta: *meta, bundlePath: cookbookPath, reason: "activated existing cached remote bundle"}, nil
 	}
 
 	extractRoot := bundleRoot + ".tmp"
@@ -182,15 +245,24 @@ func fetchAndActivateRemote(src config.RemoteSource) (*fetchedRemote, error) {
 		return nil, fmt.Errorf("activate bundle: %w", err)
 	}
 
-	meta, err := writeCurrentMetadata(src.CacheDir, cacheMetadataFromDigest(src, computedDigest))
+	meta, err := writeCurrentMetadata(src.CacheDir, cacheMetadataFromFetch(src, computedDigest, fetchResult))
 	if err != nil {
 		return nil, err
 	}
 
-	return &fetchedRemote{meta: *meta, bundlePath: filepath.Join(bundleRoot, "cookbooks")}, nil
+	return &fetchedRemote{meta: *meta, bundlePath: filepath.Join(bundleRoot, "cookbooks"), reason: "fetched and activated remote bundle"}, nil
 }
 
-func downloadBundleWithRetry(src config.RemoteSource) ([]byte, string, error) {
+type fetchBundleResult struct {
+	body         []byte
+	digest       string
+	notModified  bool
+	etag         string
+	lastModified string
+	cacheControl string
+}
+
+func downloadBundleWithRetry(src config.RemoteSource, currentMeta *cacheMetadata) (*fetchBundleResult, error) {
 	attempts := src.FetchRetries + 1
 	if attempts < 1 {
 		attempts = 1
@@ -203,39 +275,63 @@ func downloadBundleWithRetry(src config.RemoteSource) ([]byte, string, error) {
 	}
 	var lastErr error
 	for i := 0; i < attempts; i++ {
-		body, digest, err := fetchBundle(src)
+		result, err := fetchBundle(src, currentMeta)
 		if err == nil {
-			return body, digest, nil
+			return result, nil
 		}
 		lastErr = err
 		if i < attempts-1 {
 			time.Sleep(backoff)
 		}
 	}
-	return nil, "", fmt.Errorf("download bundle after %d attempts: %w", attempts, lastErr)
+	return nil, fmt.Errorf("download bundle after %d attempts: %w", attempts, lastErr)
 }
 
-func fetchBundle(src config.RemoteSource) ([]byte, string, error) {
+func fetchBundle(src config.RemoteSource, currentMeta *cacheMetadata) (*fetchBundleResult, error) {
 	client := http.Client{Timeout: 15 * time.Second}
 	if src.RequestTimeout != "" {
 		if d, err := time.ParseDuration(src.RequestTimeout); err == nil && d > 0 {
 			client.Timeout = d
 		}
 	}
-	resp, err := client.Get(src.URL) //nolint:gosec
+	req, err := http.NewRequest(http.MethodGet, src.URL, nil)
 	if err != nil {
-		return nil, "", err
+		return nil, err
+	}
+	if currentMeta != nil {
+		if currentMeta.ETag != "" {
+			req.Header.Set("If-None-Match", currentMeta.ETag)
+		}
+		if currentMeta.LastModified != "" {
+			req.Header.Set("If-Modified-Since", currentMeta.LastModified)
+		}
+	}
+	resp, err := client.Do(req) //nolint:gosec
+	if err != nil {
+		return nil, err
 	}
 	defer resp.Body.Close()
+
+	result := &fetchBundleResult{
+		etag:         strings.TrimSpace(resp.Header.Get("ETag")),
+		lastModified: strings.TrimSpace(resp.Header.Get("Last-Modified")),
+		cacheControl: strings.TrimSpace(resp.Header.Get("Cache-Control")),
+	}
+	if resp.StatusCode == http.StatusNotModified {
+		result.notModified = true
+		return result, nil
+	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return nil, "", fmt.Errorf("HTTP %d", resp.StatusCode)
+		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
 	h := sha256.Sum256(body)
-	return body, hex.EncodeToString(h[:]), nil
+	result.body = body
+	result.digest = hex.EncodeToString(h[:])
+	return result, nil
 }
 
 func fetchExpectedChecksum(src config.RemoteSource) (string, error) {
@@ -333,15 +429,49 @@ func extractBundle(file *os.File, dst string, sourceURL string) error {
 	return nil
 }
 
-func cacheMetadataFromDigest(src config.RemoteSource, digest string) cacheMetadata {
+func cacheMetadataFromFetch(src config.RemoteSource, digest string, result *fetchBundleResult) cacheMetadata {
 	now := time.Now().UTC()
-	meta := cacheMetadata{Digest: digest, FetchedAt: now, SourceURL: src.URL}
-	if src.MaxCacheAge != "" {
-		if d, err := time.ParseDuration(src.MaxCacheAge); err == nil {
-			meta.ExpiresAt = now.Add(d)
-		}
+	meta := cacheMetadata{Digest: digest, FetchedAt: now, SourceURL: src.URL, ExpiresAt: resolveExpiresAt(src, now, result.cacheControl)}
+	if result != nil {
+		meta.ETag = result.etag
+		meta.LastModified = result.lastModified
 	}
 	return meta
+}
+
+func resolveExpiresAt(src config.RemoteSource, now time.Time, cacheControl string) time.Time {
+	if maxAge := parseCacheControlMaxAge(cacheControl); maxAge > 0 {
+		return now.Add(maxAge)
+	}
+	if src.MaxCacheAge != "" {
+		if d, err := time.ParseDuration(src.MaxCacheAge); err == nil {
+			return now.Add(d)
+		}
+	}
+	return time.Time{}
+}
+
+func parseCacheControlMaxAge(cacheControl string) time.Duration {
+	if cacheControl == "" {
+		return 0
+	}
+	directives := strings.Split(cacheControl, ",")
+	for _, directive := range directives {
+		trimmed := strings.TrimSpace(directive)
+		parts := strings.SplitN(trimmed, "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		if !strings.EqualFold(strings.TrimSpace(parts[0]), "max-age") {
+			continue
+		}
+		seconds, err := strconv.Atoi(strings.Trim(strings.TrimSpace(parts[1]), `"`))
+		if err != nil || seconds <= 0 {
+			return 0
+		}
+		return time.Duration(seconds) * time.Second
+	}
+	return 0
 }
 
 func shouldRefresh(meta cacheMetadata, refreshInterval string) bool {

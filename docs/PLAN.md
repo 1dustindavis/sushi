@@ -300,13 +300,20 @@ Phase 4 operations polish is now complete: cross-platform installation/runbook d
 
 ### Phase 5 — plan/code reconciliation gaps
 
-Items below were identified by reviewing plan claims against the current codebase and should be tracked explicitly before declaring broader completion:
+Phase 5 is now complete:
 
-- [ ] Add the `sushi fetch` CLI subcommand described in the plan (`run`, `doctor`, `print-plan`, and `version` are currently implemented).
-- [ ] Implement distinct operational exit codes (current command failures collapse to a generic non-zero exit status).
+- [x] Add the `sushi fetch` CLI subcommand described in the plan (`run`, `doctor`, `print-plan`, and `version` are currently implemented).
+- [x] Implement distinct operational exit codes.
 - [x] Add timer/service artifacts and smoke coverage promised in the plan (systemd/launchd examples and native Windows Service implementation/tests are now present in the repository).
 - [x] Add runtime output-capture + retryable exception handling to conditionally try the next source after converge-time failures.
-- [ ] Implement support for common HTTP cache headers (`Cache-Control`, `ETag`, and `Last-Modified`) to avoid unnecessary downloads when remote data is unchanged; fall back to current behavior when headers are absent, and refresh local cache expiration when server responses confirm content is still current.
+- [x] Implement support for common HTTP cache headers (`Cache-Control`, `ETag`, and `Last-Modified`) to avoid unnecessary downloads when remote data is unchanged; fall back to current behavior when headers are absent, and refresh local cache expiration when server responses confirm content is still current.
+
+### Phase 6 — release readiness and policy enforcement
+
+- [ ] Expand CI with explicit smoke checks for service/scheduler artifacts on Linux/macOS/Windows and document acceptance gates.
+- [ ] Add end-to-end integration coverage for remote conditional requests (`304`), cache-expiry refresh semantics, and stale-policy exit code behavior.
+- [ ] Harden operational contract docs with a dedicated command/exit-code reference and troubleshooting matrix.
+- [ ] Add lightweight release automation/versioning guidance for producing signed, reproducible multi-platform binaries.
 
 ---
 
@@ -327,6 +334,6 @@ MVP is complete when:
 
 ## 15) Immediate next tasks
 
-1. Implement the `sushi fetch` subcommand so operators can prefetch/verify/activate remote bundles without running converge.
-2. Add distinct operational exit codes for config validation, dependency discovery, source selection, stale-cache policy violations, and converge failures.
-3. Expand timer/service smoke coverage in CI for Linux/macOS/Windows to validate systemd timer, launchd interval, and Windows service entrypoints.
+1. Expand CI with explicit service/scheduler smoke checks for Linux/macOS/Windows and enforce them as merge gates.
+2. Add deeper integration tests for HTTP conditional fetch behavior (`ETag`/`Last-Modified` + `304`) and stale-cache policy exit-code mapping.
+3. Prepare release readiness artifacts (versioning/signing/reproducible build notes) for Phase 6 delivery.

@@ -7,12 +7,14 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -35,7 +37,11 @@ type testConfig struct {
 			ChecksumURL     string `json:"checksum_url"`
 			AllowInsecure   bool   `json:"allow_insecure"`
 			RequireChecksum bool   `json:"require_checksum"`
+			RefreshInterval string `json:"refresh_interval"`
 			CacheDir        string `json:"cache_dir"`
+			MaxCacheAge     string `json:"max_cache_age"`
+			FailIfStale     bool   `json:"fail_if_stale"`
+			AllowFallback   bool   `json:"allow_cached_fallback"`
 		} `json:"remote"`
 		ChefServer struct {
 			Enabled     bool   `json:"enabled"`
@@ -137,6 +143,56 @@ func TestIntegration(t *testing.T) {
 				}
 			})
 		}
+	})
+
+	t.Run("fetch command", func(t *testing.T) {
+		caseItem := remoteCases(t)[0]
+		cacheDir := filepath.Join(t.TempDir(), "cache")
+		cfgPath := writeRemoteConfig(t, fakeClient, caseItem.sourceURL, caseItem.checksumURL, cacheDir, true, true, "")
+		out, err := runSushi(t, repoRoot, "fetch", cfgPath, capturePath)
+		if err != nil {
+			t.Fatalf("fetch failed: %v\n%s", err, out)
+		}
+		if !strings.Contains(out, "fetch result:") || !strings.Contains(out, "bundle digest:") {
+			t.Fatalf("fetch output missing fields\n%s", out)
+		}
+	})
+
+	t.Run("exit codes", func(t *testing.T) {
+		t.Run("config invalid", func(t *testing.T) {
+			badCfg := filepath.Join(t.TempDir(), "bad.json")
+			if err := os.WriteFile(badCfg, []byte("{not-json"), 0o644); err != nil {
+				t.Fatalf("write bad config: %v", err)
+			}
+			_, exitCode := runSushiExitCode(t, repoRoot, "print-plan", badCfg, capturePath, nil)
+			if exitCode != 10 {
+				t.Fatalf("expected exit code 10, got %d", exitCode)
+			}
+		})
+
+		t.Run("dependency missing", func(t *testing.T) {
+			cfgPath := writeLocalConfigWithClient(t, "missing-client-binary")
+			_, exitCode := runSushiExitCode(t, repoRoot, "doctor", cfgPath, capturePath, nil)
+			if exitCode != 11 {
+				t.Fatalf("expected exit code 11, got %d", exitCode)
+			}
+		})
+
+		t.Run("source unavailable", func(t *testing.T) {
+			cfgPath := writeRemoteConfig(t, fakeClient, "http://127.0.0.1:1/bundle.tar.gz", "", filepath.Join(t.TempDir(), "cache"), true, false, "")
+			_, exitCode := runSushiExitCode(t, repoRoot, "print-plan", cfgPath, capturePath, nil)
+			if exitCode != 12 {
+				t.Fatalf("expected exit code 12, got %d", exitCode)
+			}
+		})
+
+		t.Run("converge failure", func(t *testing.T) {
+			cfgPath := writeLocalConfig(t, fakeClient)
+			_, exitCode := runSushiExitCode(t, repoRoot, "run", cfgPath, capturePath, []string{"SUSHI_FAKE_CLIENT_EXIT_CODE=5"})
+			if exitCode != 14 {
+				t.Fatalf("expected exit code 14, got %d", exitCode)
+			}
+		})
 	})
 
 	t.Run("chef_server", func(t *testing.T) {
@@ -298,6 +354,28 @@ func runSushiWithEnv(t *testing.T, root, command, cfgPath, capturePath string, e
 	return string(out), err
 }
 
+func runSushiExitCode(t *testing.T, root, command, cfgPath, capturePath string, extraEnv []string) (string, int) {
+	t.Helper()
+	out, err := runSushiWithEnv(t, root, command, cfgPath, capturePath, extraEnv)
+	if err == nil {
+		return out, 0
+	}
+	if idx := strings.LastIndex(out, "exit status "); idx >= 0 {
+		value := strings.TrimSpace(out[idx+len("exit status "):])
+		if fields := strings.Fields(value); len(fields) > 0 {
+			if code, convErr := strconv.Atoi(fields[0]); convErr == nil {
+				return out, code
+			}
+		}
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return out, exitErr.ExitCode()
+	}
+	t.Fatalf("unexpected command error type: %v", err)
+	return out, -1
+}
+
 func repoRoot(t *testing.T) string {
 	t.Helper()
 	_, thisFile, _, ok := runtime.Caller(0)
@@ -342,6 +420,19 @@ func writeLocalConfigWithLock(t *testing.T, client, lockPath string) string {
 	return writeConfig(t, cfg)
 }
 
+func writeLocalConfigWithClient(t *testing.T, client string) string {
+	t.Helper()
+
+	repo := repoRoot(t)
+	cfg := testConfig{}
+	cfg.Runtime.ClientBinary = client
+	cfg.SourceOrder = []string{"local"}
+	cfg.Sources.Local.Enabled = true
+	cfg.Sources.Local.CookbookPath = filepath.Join(repo, "integration", "testdata", "local-cookbooks")
+
+	return writeConfig(t, cfg)
+}
+
 func writeChefServerConfig(t *testing.T, client, clientRB, endpoint, timeout string) string {
 	t.Helper()
 
@@ -370,6 +461,7 @@ func writeRemoteConfig(t *testing.T, client, bundleURL, checksumURL, cacheDir st
 	cfg.Sources.Remote.ChecksumURL = checksumURL
 	cfg.Sources.Remote.AllowInsecure = allowInsecure
 	cfg.Sources.Remote.RequireChecksum = requireChecksum
+	cfg.Sources.Remote.AllowFallback = true
 	cfg.Sources.Remote.CacheDir = cacheDir
 	cfg.Sources.ChefServer.Enabled = false
 	cfg.Execution.LockFile = lockPath
