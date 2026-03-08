@@ -6,8 +6,10 @@ import (
 	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -246,4 +248,77 @@ func compressZstd(t *testing.T, data []byte) []byte {
 func hexDigest(data []byte) string {
 	h := sha256.Sum256(data)
 	return hex.EncodeToString(h[:])
+}
+
+func TestResolveRemoteReadOnlyWithoutCacheFails(t *testing.T) {
+	src := config.RemoteSource{URL: "https://127.0.0.1:1/unreachable.tar", RequireChecksum: false, CacheDir: t.TempDir()}
+	_, err := ResolveRemoteReadOnly(src)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestResolveRemoteReadOnlyUsesCache(t *testing.T) {
+	cacheDir := filepath.Join(t.TempDir(), "cache")
+	meta := cacheMetadata{Digest: "abc123", FetchedAt: time.Now().Add(-1 * time.Hour), SourceURL: "https://example.org/cookbooks.tar"}
+	bundlePath := filepath.Join(cacheDir, "bundles", meta.Digest, "cookbooks")
+	if err := os.MkdirAll(bundlePath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writeCurrentMetadata(cacheDir, meta); err != nil {
+		t.Fatal(err)
+	}
+
+	src := config.RemoteSource{URL: "https://example.org/cookbooks.tar", CacheDir: cacheDir, RefreshInterval: "24h"}
+	result, err := ResolveRemoteReadOnly(src)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result.Reason, "cached bundle") {
+		t.Fatalf("expected read-only reason, got %q", result.Reason)
+	}
+}
+
+func TestIsCacheStaleHonorsExpiresAt(t *testing.T) {
+	meta := cacheMetadata{FetchedAt: time.Now().Add(-5 * time.Minute), ExpiresAt: time.Now().Add(-1 * time.Minute)}
+	stale, _, err := isCacheStale(meta, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !stale {
+		t.Fatal("expected stale when ExpiresAt is in the past")
+	}
+}
+
+func TestFetchRemoteSetsStaleViolationWhenFallbackDenied(t *testing.T) {
+	cacheDir := filepath.Join(t.TempDir(), "cache")
+	meta := cacheMetadata{Digest: "abc123", FetchedAt: time.Now().Add(-48 * time.Hour), SourceURL: "https://example.org/cookbooks.tar"}
+	bundlePath := filepath.Join(cacheDir, "bundles", meta.Digest, "cookbooks")
+	if err := os.MkdirAll(bundlePath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writeCurrentMetadata(cacheDir, meta); err != nil {
+		t.Fatal(err)
+	}
+
+	src := config.RemoteSource{
+		URL:                 "https://127.0.0.1:1/unreachable.tar",
+		RequireChecksum:     false,
+		CacheDir:            cacheDir,
+		RefreshInterval:     "0s",
+		MaxCacheAge:         "24h",
+		AllowCachedFallback: true,
+		FailIfStale:         true,
+	}
+	_, err := FetchRemote(src)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	var unavailable *RemoteUnavailableError
+	if !errors.As(err, &unavailable) {
+		t.Fatalf("expected RemoteUnavailableError, got %T", err)
+	}
+	if !unavailable.StaleCacheViolation {
+		t.Fatalf("expected stale cache violation, got %#v", unavailable)
+	}
 }

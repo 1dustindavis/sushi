@@ -9,6 +9,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
+	"sync"
 	"time"
 )
 
@@ -139,6 +141,10 @@ func acquireRequestedLock(req RunRequest) (func(), error) {
 	return release, nil
 }
 
+func AcquireLock(path string, waitTimeout time.Duration, pollInterval time.Duration, staleAge time.Duration) (func(), error) {
+	return acquireLock(path, waitTimeout, pollInterval, staleAge)
+}
+
 func acquireLock(path string, waitTimeout time.Duration, pollInterval time.Duration, staleAge time.Duration) (func(), error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, fmt.Errorf("prepare lock directory: %w", err)
@@ -151,13 +157,51 @@ func acquireLock(path string, waitTimeout time.Duration, pollInterval time.Durat
 	for {
 		lock, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
 		if err == nil {
-			if _, writeErr := lock.WriteString(fmt.Sprintf("pid=%d\nacquired_at=%s\n", os.Getpid(), time.Now().UTC().Format(time.RFC3339Nano))); writeErr != nil {
+			lockID := fmt.Sprintf("%d-%d", os.Getpid(), time.Now().UTC().UnixNano())
+			lockContents := fmt.Sprintf("pid=%d\nlock_id=%s\nacquired_at=%s\n", os.Getpid(), lockID, time.Now().UTC().Format(time.RFC3339Nano))
+			if _, writeErr := lock.WriteString(lockContents); writeErr != nil {
 				_ = lock.Close()
 				_ = os.Remove(path)
 				return nil, fmt.Errorf("initialize lock file: %w", writeErr)
 			}
 			_ = lock.Close()
+
+			var wg sync.WaitGroup
+			stopHeartbeat := make(chan struct{})
+			if staleAge > 0 {
+				heartbeatInterval := staleAge / 3
+				if heartbeatInterval <= 0 {
+					heartbeatInterval = 1 * time.Second
+				}
+				if heartbeatInterval > 5*time.Second {
+					heartbeatInterval = 5 * time.Second
+				}
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					ticker := time.NewTicker(heartbeatInterval)
+					defer ticker.Stop()
+					for {
+						select {
+						case <-stopHeartbeat:
+							return
+						case now := <-ticker.C:
+							_ = os.Chtimes(path, now, now)
+						}
+					}
+				}()
+			}
+
 			return func() {
+				close(stopHeartbeat)
+				wg.Wait()
+				bytes, readErr := os.ReadFile(path)
+				if readErr != nil {
+					return
+				}
+				if !strings.Contains(string(bytes), "lock_id="+lockID) {
+					return
+				}
 				_ = os.Remove(path)
 			}, nil
 		}

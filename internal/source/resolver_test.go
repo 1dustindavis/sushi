@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -307,4 +308,42 @@ func makeZstdTarBundle(t *testing.T) []byte {
 func ExampleResolve() {
 	fmt.Println("resolver")
 	// Output: resolver
+}
+
+func TestResolveForInspectionRemoteWithoutCacheFails(t *testing.T) {
+	cfg := &config.Config{
+		SourceOrder: []string{"remote"},
+		Sources: config.SourcesConfig{
+			Remote: config.RemoteSource{Enabled: true, URL: "https://127.0.0.1:1/unreachable.tar", RequireChecksum: false, CacheDir: filepath.Join(t.TempDir(), "cache")},
+		},
+	}
+
+	_, err := ResolveForInspection(cfg)
+	if err == nil {
+		t.Fatal("expected inspection resolve error")
+	}
+	if !strings.Contains(err.Error(), "read-only remote fetch failed") {
+		t.Fatalf("expected read-only cache requirement, got %v", err)
+	}
+}
+
+func TestResolveNoUsableSourcesIncludesDecisionDetails(t *testing.T) {
+	cfg := &config.Config{
+		SourceOrder: []string{"local", "remote"},
+		Sources: config.SourcesConfig{
+			Local:  config.LocalSource{Enabled: false},
+			Remote: config.RemoteSource{Enabled: true, URL: ":bad-url:"},
+		},
+	}
+
+	_, err := Resolve(cfg)
+	if err == nil {
+		t.Fatal("expected no usable source error")
+	}
+	if !strings.Contains(err.Error(), "local=disabled") {
+		t.Fatalf("expected local decision in error, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "remote=invalid URL") {
+		t.Fatalf("expected remote decision in error, got %v", err)
+	}
 }

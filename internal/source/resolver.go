@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"sushi/internal/config"
@@ -37,9 +38,14 @@ type Resolution struct {
 	Candidates []Candidate
 }
 
+type ResolveOptions struct {
+	ReadOnly bool
+}
+
 type ResolutionError struct {
 	Err                 error
 	StaleCacheViolation bool
+	Decisions           []Decision
 }
 
 func (e *ResolutionError) Error() string {
@@ -58,7 +64,19 @@ func Resolve(cfg *config.Config) (*Plan, error) {
 	return resolution.Plan, nil
 }
 
+func ResolveForInspection(cfg *config.Config) (*Plan, error) {
+	resolution, err := ResolveWithCandidatesOptions(cfg, ResolveOptions{ReadOnly: true})
+	if err != nil {
+		return nil, err
+	}
+	return resolution.Plan, nil
+}
+
 func ResolveWithCandidates(cfg *config.Config) (*Resolution, error) {
+	return ResolveWithCandidatesOptions(cfg, ResolveOptions{})
+}
+
+func ResolveWithCandidatesOptions(cfg *config.Config, opts ResolveOptions) (*Resolution, error) {
 	plan := &Plan{}
 	var candidates []Candidate
 	staleCacheViolation := false
@@ -73,7 +91,7 @@ func ResolveWithCandidates(cfg *config.Config) (*Resolution, error) {
 			plan.Decisions = append(plan.Decisions, Decision{Source: "local", Reason: reason})
 			candidates = append(candidates, *candidate)
 		case "remote":
-			candidate, reason, err := evaluateRemote(cfg)
+			candidate, reason, err := evaluateRemote(cfg, opts)
 			if err != nil {
 				var remoteUnavailable *RemoteUnavailableError
 				if errors.As(err, &remoteUnavailable) && remoteUnavailable.StaleCacheViolation {
@@ -99,9 +117,10 @@ func ResolveWithCandidates(cfg *config.Config) (*Resolution, error) {
 
 	if len(candidates) == 0 {
 		if len(plan.Decisions) == 0 {
-			return nil, &ResolutionError{Err: errors.New("no sources configured")}
+			return nil, &ResolutionError{Err: errors.New("no sources configured"), Decisions: plan.Decisions}
 		}
-		return nil, &ResolutionError{Err: fmt.Errorf("no usable source from configured source_order"), StaleCacheViolation: staleCacheViolation}
+		detail := formatDecisions(plan.Decisions)
+		return nil, &ResolutionError{Err: fmt.Errorf("no usable source from configured source_order (%s)", detail), StaleCacheViolation: staleCacheViolation, Decisions: plan.Decisions}
 	}
 
 	selected := candidates[0]
@@ -110,6 +129,14 @@ func ResolveWithCandidates(cfg *config.Config) (*Resolution, error) {
 	plan.BundleDigest = selected.BundleDigest
 	plan.ChefServerClient = selected.ChefServerPath
 	return &Resolution{Plan: plan, Candidates: candidates}, nil
+}
+
+func formatDecisions(decisions []Decision) string {
+	parts := make([]string, 0, len(decisions))
+	for _, decision := range decisions {
+		parts = append(parts, fmt.Sprintf("%s=%s", decision.Source, decision.Reason))
+	}
+	return strings.Join(parts, "; ")
 }
 
 func evaluateLocal(cfg *config.Config) (*Candidate, string, error) {
@@ -130,14 +157,22 @@ func evaluateLocal(cfg *config.Config) (*Candidate, string, error) {
 	return &Candidate{Source: "local", CookbookPath: path}, "usable", nil
 }
 
-func evaluateRemote(cfg *config.Config) (*Candidate, string, error) {
+func evaluateRemote(cfg *config.Config, opts ResolveOptions) (*Candidate, string, error) {
 	if !cfg.Sources.Remote.Enabled {
 		return nil, "disabled", errors.New("remote disabled")
 	}
 	if _, err := url.ParseRequestURI(cfg.Sources.Remote.URL); err != nil {
 		return nil, "invalid URL", err
 	}
-	remote, err := ResolveRemote(cfg.Sources.Remote)
+	var (
+		remote *RemoteResult
+		err    error
+	)
+	if opts.ReadOnly {
+		remote, err = ResolveRemoteReadOnly(cfg.Sources.Remote)
+	} else {
+		remote, err = ResolveRemote(cfg.Sources.Remote)
+	}
 	if err != nil {
 		return nil, err.Error(), err
 	}
