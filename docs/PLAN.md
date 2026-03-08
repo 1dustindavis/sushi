@@ -256,6 +256,8 @@ Remaining gaps before Phase 1 can be considered fully complete:
 
 Phase 2 hardening is now complete: lock wait/stale handling, converge and request timeout controls, remote retry/backoff, stale-cache warning windows, and expanded test coverage.
 
+Phase 3 optional Chef Server integration is now complete: deterministic `chef_server` resolution (disabled by default), optional healthcheck gating with clear failure reasons, explicit Chef Server run-mode execution, and fallback coverage across `chef_server`, `remote`, and `local` ordering.
+
 ### Phase 0 — project scaffolding (short)
 
 - [x] Define JSON config schema + parser + validation.
@@ -280,9 +282,9 @@ Phase 2 hardening is now complete: lock wait/stale handling, converge and reques
 
 ### Phase 3 — optional Chef Server integration
 
-- Add explicit server mode execution path with healthcheck.
-- Keep disabled by default.
-- Ensure fallback path remains deterministic and observable under `source_order`.
+- [x] Add explicit server mode execution path with healthcheck.
+- [x] Keep disabled by default.
+- [x] Ensure fallback path remains deterministic and observable under `source_order`.
 
 ### Phase 4 — operations polish
 
@@ -310,7 +312,7 @@ MVP is complete when:
 
 ## 15) Immediate next tasks
 
-1. Implement explicit `chef_server` execution path that is selected via `source_order` and remains disabled by default.
-2. Add configurable Chef Server healthcheck handling with deterministic failure reasons surfaced in `print-plan` and logs.
-3. Add tests that validate deterministic fallback behavior between `chef_server`, `remote`, and `local` sources under degraded conditions.
-4. Define and document Chef Server runtime contract (required files/credentials) while preserving local-first ergonomics.
+1. Publish packaging and installation documentation for Linux, macOS, and Windows (including upgrade/uninstall guidance).
+2. Add production-ready service operation examples: `systemd` units/timers, `launchd` plists, and native Windows Service setup + Event Log guidance.
+3. Build a daemon/service behavior test harness that exercises start/stop, lock interaction, and deterministic retry/backoff semantics on each platform.
+4. Add telemetry hooks and richer diagnostics (including structured operational signals for source resolution, converge latency, and service lifecycle).

@@ -18,3 +18,4 @@ A sample configuration is available at [`example/config.json`](example/config.js
 
 - ✅ **Phase 1 (serverless core/MVP) implemented**: local + remote source resolution, remote bundle fetch, integrated cache fallback policy, atomic cache activation with metadata tracking, `run` execution in local/zero mode, and decision-rich `print-plan`.
 - ✅ **Phase 2 (hardening) implemented**: lock/timeout controls, retry/backoff, stronger remote integrity + stale-cache policy controls, and expanded unit test coverage.
+- ✅ **Phase 3 (optional Chef Server integration) implemented**: deterministic `chef_server` source resolution with optional healthchecks, explicit Chef Server execution mode, and fallback visibility in `print-plan`/`doctor`.

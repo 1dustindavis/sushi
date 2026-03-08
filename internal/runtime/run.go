@@ -12,6 +12,7 @@ import (
 type RunRequest struct {
 	ClientBinary       string
 	CookbookPath       string
+	ClientRBPath       string
 	RunListFile        string
 	JSONAttributesFile string
 	LockFile           string
@@ -29,13 +30,9 @@ func ExecuteLocalMode(req RunRequest) error {
 		return fmt.Errorf("cookbook path is required")
 	}
 
-	releaseLock := func() {}
-	if req.LockFile != "" {
-		release, err := acquireLock(req.LockFile, req.LockWaitTimeout, req.LockPollInterval, req.LockStaleAge)
-		if err != nil {
-			return err
-		}
-		releaseLock = release
+	releaseLock, err := acquireRequestedLock(req)
+	if err != nil {
+		return err
 	}
 	defer releaseLock()
 
@@ -52,6 +49,31 @@ func ExecuteLocalMode(req RunRequest) error {
 	}
 
 	args := []string{"-z", "-c", clientRB}
+	return executeConverge(req, args)
+}
+
+func ExecuteChefServerMode(req RunRequest) error {
+	if req.ClientBinary == "" {
+		return fmt.Errorf("client binary is required")
+	}
+	if req.ClientRBPath == "" {
+		return fmt.Errorf("client.rb path is required")
+	}
+	if _, err := os.Stat(req.ClientRBPath); err != nil {
+		return fmt.Errorf("client.rb unavailable: %w", err)
+	}
+
+	releaseLock, err := acquireRequestedLock(req)
+	if err != nil {
+		return err
+	}
+	defer releaseLock()
+
+	args := []string{"-c", req.ClientRBPath}
+	return executeConverge(req, args)
+}
+
+func executeConverge(req RunRequest, args []string) error {
 	jsonInput := req.JSONAttributesFile
 	if jsonInput == "" {
 		jsonInput = req.RunListFile
@@ -78,6 +100,18 @@ func ExecuteLocalMode(req RunRequest) error {
 		return fmt.Errorf("execute converge: %w", err)
 	}
 	return nil
+}
+
+func acquireRequestedLock(req RunRequest) (func(), error) {
+	releaseLock := func() {}
+	if req.LockFile == "" {
+		return releaseLock, nil
+	}
+	release, err := acquireLock(req.LockFile, req.LockWaitTimeout, req.LockPollInterval, req.LockStaleAge)
+	if err != nil {
+		return nil, err
+	}
+	return release, nil
 }
 
 func acquireLock(path string, waitTimeout time.Duration, pollInterval time.Duration, staleAge time.Duration) (func(), error) {

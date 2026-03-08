@@ -62,7 +62,12 @@ func run(args []string) error {
 
 	logger.Info("run plan resolved", "selected_mode", plan.Selected, "client_binary", client, "cookbook_path", plan.SelectedCookbook, "bundle_digest", plan.BundleDigest)
 	fmt.Printf("selected source: %s\n", plan.Selected)
-	fmt.Printf("cookbook path: %s\n", plan.SelectedCookbook)
+	if plan.SelectedCookbook != "" {
+		fmt.Printf("cookbook path: %s\n", plan.SelectedCookbook)
+	}
+	if plan.ChefServerClient != "" {
+		fmt.Printf("chef client.rb: %s\n", plan.ChefServerClient)
+	}
 	fmt.Printf("client binary: %s\n", client)
 
 	lockWaitTimeout, err := parseOptionalDuration(cfg.Execution.LockWaitTimeout)
@@ -82,9 +87,10 @@ func run(args []string) error {
 		return fmt.Errorf("parse execution.converge_timeout: %w", err)
 	}
 
-	err = runtime.ExecuteLocalMode(runtime.RunRequest{
+	req := runtime.RunRequest{
 		ClientBinary:       client,
 		CookbookPath:       plan.SelectedCookbook,
+		ClientRBPath:       plan.ChefServerClient,
 		RunListFile:        cfg.Execution.RunListFile,
 		JSONAttributesFile: cfg.Execution.JSONAttributesFile,
 		LockFile:           cfg.Execution.LockFile,
@@ -92,11 +98,14 @@ func run(args []string) error {
 		LockPollInterval:   lockPollInterval,
 		LockStaleAge:       lockStaleAge,
 		ConvergeTimeout:    convergeTimeout,
-	})
-	if err != nil {
-		return err
 	}
-	return nil
+
+	switch plan.Selected {
+	case "chef_server":
+		return runtime.ExecuteChefServerMode(req)
+	default:
+		return runtime.ExecuteLocalMode(req)
+	}
 }
 
 func doctor(args []string) error {
@@ -144,7 +153,12 @@ func printPlan(args []string) error {
 
 	logger.Info("print-plan resolved", "selected_mode", plan.Selected, "decision_count", len(plan.Decisions), "cookbook_path", plan.SelectedCookbook, "bundle_digest", plan.BundleDigest)
 	fmt.Printf("selected source: %s\n", plan.Selected)
-	fmt.Printf("cookbook path: %s\n", plan.SelectedCookbook)
+	if plan.SelectedCookbook != "" {
+		fmt.Printf("cookbook path: %s\n", plan.SelectedCookbook)
+	}
+	if plan.ChefServerClient != "" {
+		fmt.Printf("chef client.rb: %s\n", plan.ChefServerClient)
+	}
 	if plan.BundleDigest != "" {
 		fmt.Printf("bundle digest: %s\n", plan.BundleDigest)
 	}

@@ -187,6 +187,11 @@ func Validate(cfg *Config) error {
 				if cfg.Sources.ChefServer.ClientRB == "" {
 					return ValidationError{Field: "sources.chef_server.client_rb", Message: "required when chef_server source is enabled"}
 				}
+				if cfg.Sources.ChefServer.Healthcheck.Timeout != "" {
+					if _, err := time.ParseDuration(cfg.Sources.ChefServer.Healthcheck.Timeout); err != nil {
+						return ValidationError{Field: "sources.chef_server.healthcheck.timeout", Message: "must be a valid duration"}
+					}
+				}
 			}
 		}
 	}

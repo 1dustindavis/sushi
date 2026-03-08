@@ -3,9 +3,11 @@ package source
 import (
 	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"time"
 
 	"sushi/internal/config"
 )
@@ -19,6 +21,7 @@ type Plan struct {
 	Selected         string
 	SelectedCookbook string
 	BundleDigest     string
+	ChefServerClient string
 	Decisions        []Decision
 }
 
@@ -73,8 +76,15 @@ func Resolve(cfg *config.Config) (*Plan, error) {
 				plan.Decisions = append(plan.Decisions, Decision{Source: "chef_server", Reason: "disabled"})
 				continue
 			}
-			plan.Decisions = append(plan.Decisions, Decision{Source: "chef_server", Reason: "chef_server is not available in phase 1"})
-			continue
+			reason, err := validateChefServerSource(cfg.Sources.ChefServer)
+			if err != nil {
+				plan.Decisions = append(plan.Decisions, Decision{Source: "chef_server", Reason: err.Error()})
+				continue
+			}
+			plan.Decisions = append(plan.Decisions, Decision{Source: "chef_server", Reason: reason})
+			plan.Selected = "chef_server"
+			plan.ChefServerClient = cfg.Sources.ChefServer.ClientRB
+			return plan, nil
 		default:
 			plan.Decisions = append(plan.Decisions, Decision{Source: sourceName, Reason: "unsupported source"})
 		}
@@ -84,4 +94,36 @@ func Resolve(cfg *config.Config) (*Plan, error) {
 		return nil, errors.New("no sources configured")
 	}
 	return nil, fmt.Errorf("no usable source from configured source_order")
+}
+
+func validateChefServerSource(cfg config.ChefServerSource) (string, error) {
+	if _, err := os.Stat(cfg.ClientRB); err != nil {
+		return "", fmt.Errorf("client_rb unavailable: %v", err)
+	}
+	if cfg.Healthcheck.Endpoint == "" {
+		return "usable (healthcheck skipped)", nil
+	}
+
+	timeout := 2 * time.Second
+	if cfg.Healthcheck.Timeout != "" {
+		parsed, err := time.ParseDuration(cfg.Healthcheck.Timeout)
+		if err != nil {
+			return "", fmt.Errorf("invalid healthcheck timeout: %v", err)
+		}
+		timeout = parsed
+	}
+	if timeout <= 0 {
+		return "", fmt.Errorf("invalid healthcheck timeout: must be > 0")
+	}
+
+	client := http.Client{Timeout: timeout}
+	resp, err := client.Get(cfg.Healthcheck.Endpoint)
+	if err != nil {
+		return "", fmt.Errorf("healthcheck failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("healthcheck returned status %d", resp.StatusCode)
+	}
+	return fmt.Sprintf("usable (healthcheck %s)", resp.Status), nil
 }
