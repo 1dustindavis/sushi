@@ -6,8 +6,8 @@ A sample configuration is available at [`examples/config.json`](examples/config.
 
 ## Commands
 
-- `sushi run -config <path>`: resolves source order and executes converge flow.
 - `sushi -config <path>`: alias for `sushi run` (operator-friendly default).
+- `sushi run -config <path>`: resolves source order and executes converge flow.
 - `sushi doctor -config <path>`: validates config, binary discovery, and source resolution.
 - `sushi fetch -config <path>`: fetches/verifies/activates the remote bundle without running converge.
 - `sushi print-plan -config <path>`: prints source selection decisions without converging.
