@@ -118,11 +118,18 @@ Maximum runtime for converge execution before cancellation.
 
 ## Platform defaults
 
-If `-config` is omitted, sushi uses a platform default path:
+Config path precedence is platform-aware when `-config` is omitted:
 
-- Linux: `/etc/sushi/config.json`
-- macOS: `/Library/Application Support/sushi/config.json`
-- Windows: `%ProgramData%\sushi\config.json`
+- Linux:
+  1. `/etc/sushi/config.json`
+- macOS:
+  1. Configuration profile preference domain `com.github.1dustindavis.sushi`, key `Config` (JSON string)
+     (`/Library/Managed Preferences/com.github.1dustindavis.sushi.plist`)
+  2. User/system defaults domain `com.github.1dustindavis.sushi`, key `Config` (JSON string)
+  3. `/Library/Application Support/sushi/config.json`
+- Windows:
+  1. Registry `HKLM\SOFTWARE\com.github.1dustindavis.sushi`, value `Config` (REG_SZ JSON string)
+  2. `%ProgramData%\sushi\config.json`
 
 Default log file locations:
 

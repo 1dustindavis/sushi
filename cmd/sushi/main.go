@@ -349,14 +349,25 @@ func acquireExecutionLock(cfg *config.Config) (func(), error) {
 func loadConfig(args []string) (*config.Config, error) {
 	fs := flag.NewFlagSet("sushi", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	configPath := fs.String("config", config.DefaultConfigPath(), "path to sushi JSON config")
+	configPath := fs.String("config", "", "path to sushi JSON config")
 	if err := fs.Parse(args); err != nil {
 		return nil, err
 	}
+	configArgProvided := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "config" {
+			configArgProvided = true
+		}
+	})
 
-	cfg, err := config.Load(*configPath)
+	cfg, resolvedConfig, err := config.LoadResolvedConfig(*configPath, configArgProvided)
 	if err != nil {
 		return nil, err
+	}
+	if resolvedConfig.Path != "" {
+		logger.Info("config resolved", "source", resolvedConfig.Source, "path", resolvedConfig.Path)
+	} else {
+		logger.Info("config resolved", "source", resolvedConfig.Source)
 	}
 	if err := config.Validate(cfg); err != nil {
 		return nil, err

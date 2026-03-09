@@ -87,7 +87,10 @@ func Load(path string) (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read config: %w", err)
 	}
+	return parseConfigJSON(bytes)
+}
 
+func parseConfigJSON(bytes []byte) (*Config, error) {
 	var cfg Config
 	if err := json.Unmarshal(bytes, &cfg); err != nil {
 		return nil, fmt.Errorf("parse config JSON: %w", err)

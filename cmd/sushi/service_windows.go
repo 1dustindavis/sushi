@@ -22,14 +22,14 @@ func serviceCommand(args []string) error {
 	}
 
 	subcommand := args[0]
-	configPath, err := serviceConfigPathFromArgs(args[1:])
+	configPath, configArgProvided, err := serviceConfigPathFromArgs(args[1:])
 	if err != nil {
 		return err
 	}
 
 	switch subcommand {
 	case "install":
-		return installWindowsService(configPath)
+		return installWindowsService(configPath, configArgProvided)
 	case "uninstall":
 		return runSC("delete", windowsServiceName)
 	case "start":
@@ -44,29 +44,32 @@ func serviceCommand(args []string) error {
 		fmt.Print(out)
 		return nil
 	case "run":
-		return svc.Run(windowsServiceName, &sushiService{configPath: configPath})
+		return svc.Run(windowsServiceName, &sushiService{configPath: configPath, configArgProvided: configArgProvided})
 	default:
 		return fmt.Errorf("unknown service command %q", subcommand)
 	}
 }
 
-func serviceConfigPathFromArgs(args []string) (string, error) {
-	configPath := config.DefaultConfigPath()
+func serviceConfigPathFromArgs(args []string) (string, bool, error) {
+	configPath := ""
+	configArgProvided := false
 	for idx := 0; idx < len(args); idx++ {
 		if args[idx] != "-config" {
 			continue
 		}
 		if idx+1 >= len(args) {
-			return "", fmt.Errorf("-config requires a value")
+			return "", false, fmt.Errorf("-config requires a value")
 		}
 		configPath = args[idx+1]
+		configArgProvided = true
 		idx++
 	}
-	return configPath, nil
+	return configPath, configArgProvided, nil
 }
 
 type sushiService struct {
-	configPath string
+	configPath        string
+	configArgProvided bool
 }
 
 func (m *sushiService) Execute(_ []string, req <-chan svc.ChangeRequest, status chan<- svc.Status) (bool, uint32) {
@@ -79,7 +82,7 @@ func (m *sushiService) Execute(_ []string, req <-chan svc.ChangeRequest, status 
 	defer ticker.Stop()
 
 	runOnce := func() {
-		if err := runWithConfigPath(m.configPath); err != nil {
+		if err := runWithConfigSource(m.configPath, m.configArgProvided); err != nil {
 			logger.Error("windows service converge failed", "error", err)
 		}
 	}
@@ -101,8 +104,8 @@ func (m *sushiService) Execute(_ []string, req <-chan svc.ChangeRequest, status 
 	}
 }
 
-func runWithConfigPath(path string) error {
-	cfg, err := config.Load(path)
+func runWithConfigSource(configPath string, configArgProvided bool) error {
+	cfg, _, err := config.LoadResolvedConfig(configPath, configArgProvided)
 	if err != nil {
 		return err
 	}
@@ -112,21 +115,24 @@ func runWithConfigPath(path string) error {
 	return runWithConfig(cfg)
 }
 
-func installWindowsService(configPath string) error {
+func installWindowsService(configPath string, configArgProvided bool) error {
 	exePath, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("resolve executable path: %w", err)
 	}
 
-	if err := runSC(buildWindowsServiceCreateArgs(exePath, configPath)...); err != nil {
+	if err := runSC(buildWindowsServiceCreateArgs(exePath, configPath, configArgProvided)...); err != nil {
 		return err
 	}
 	_ = runSC("description", windowsServiceName, "sushi local-first converge service")
 	return nil
 }
 
-func buildWindowsServiceCreateArgs(exePath, configPath string) []string {
-	binPath := fmt.Sprintf("\"%s\" service run -config \"%s\"", exePath, configPath)
+func buildWindowsServiceCreateArgs(exePath, configPath string, configArgProvided bool) []string {
+	binPath := fmt.Sprintf("\"%s\" service run", exePath)
+	if configArgProvided {
+		binPath = fmt.Sprintf("%s -config \"%s\"", binPath, configPath)
+	}
 	return []string{"create", windowsServiceName, "binPath=", binPath, "start=", "auto", "DisplayName=", "sushi"}
 }
 

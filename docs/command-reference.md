@@ -13,3 +13,5 @@
 | `sushi service <install|uninstall|start|stop|status> [-config <path>]` | Manage native Windows Service lifecycle. | Windows only. |
 
 Linux/macOS should use the platform scheduler (`systemd` timer or `launchd StartInterval`) to run `sushi run` every 10 minutes.
+
+When `-config` is not passed, sushi resolves config paths using platform precedence (macOS configuration profile/defaults, Windows registry, then default file path).
