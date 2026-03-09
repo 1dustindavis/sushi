@@ -11,6 +11,7 @@ A sample configuration is available at [`examples/config.json`](examples/config.
 - `sushi doctor -config <path>`: validates config, binary discovery, and source resolution.
 - `sushi fetch -config <path>`: fetches/verifies/activates the remote bundle without running converge.
 - `sushi print-plan -config <path>`: prints source selection decisions without converging.
+- `sushi archive [<cookbook_dir>] [-o|--output <archive_path>] [--checksum]`: creates a remote-compatible cookbook archive (defaults to current directory).
 - `sushi version`: prints the build version (defaults to `dev` unless set at build time).
 - `sushi service <install|uninstall|start|stop|status|run> [-config <path>]`: native Windows service management/host mode.
 - `sushi help`: prints command usage.
