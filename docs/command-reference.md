@@ -7,6 +7,7 @@
 | `sushi fetch -config <path>` | Prefetch/verify/activate remote bundle only. | Does not run Chef converge. |
 | `sushi doctor -config <path>` | Validate config, dependency discovery, and source resolution. | Safe preflight command for automation gates. |
 | `sushi print-plan -config <path>` | Print deterministic source-selection decisions. | No converge side effects. |
+| `sushi archive [<cookbook_dir>] [-o\|--output <archive_path>] [--checksum]` | Package cookbooks as a remote-compatible tarball. | Defaults to current directory; `--checksum` writes `<archive>.sha256`. Does not read config or modify cache. |
 | `sushi version` | Print build version string. | Defaults to `dev` unless set by linker flag. |
 | `sushi service run -config <path>` | Windows Service host mode. | Windows only. |
 | `sushi service <install|uninstall|start|stop|status> [-config <path>]` | Manage native Windows Service lifecycle. | Windows only. |

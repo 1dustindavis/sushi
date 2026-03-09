@@ -155,6 +155,60 @@ func TestIntegration(t *testing.T) {
 		}
 	})
 
+	t.Run("archive artifact usable by remote", func(t *testing.T) {
+		archiveRoot := t.TempDir()
+		archivePath := filepath.Join(archiveRoot, "cookbooks.tar.gz")
+		checksumPath := archivePath + ".sha256"
+
+		fixtureCookbooks := filepath.Join(repoRoot, "integration", "testdata", "local-cookbooks")
+		localCookbooks := filepath.Join(t.TempDir(), "cookbooks")
+		copyDir(t, fixtureCookbooks, localCookbooks)
+		archiveOut, archiveErr := runSushiArchive(t, repoRoot, localCookbooks, archivePath, true)
+		if archiveErr != nil {
+			t.Fatalf("archive failed: %v\n%s", archiveErr, archiveOut)
+		}
+		if !strings.Contains(archiveOut, "archive digest:") {
+			t.Fatalf("archive output missing digest\n%s", archiveOut)
+		}
+		if _, err := os.Stat(checksumPath); err != nil {
+			t.Fatalf("expected checksum file: %v", err)
+		}
+
+		fs := http.FileServer(http.Dir(archiveRoot))
+		server := httptest.NewServer(fs)
+		defer server.Close()
+
+		cacheDir := filepath.Join(t.TempDir(), "cache")
+		cfgPath := writeRemoteConfig(t, fakeClient, server.URL+"/cookbooks.tar.gz", server.URL+"/cookbooks.tar.gz.sha256", cacheDir, true, true, "")
+		out, err := runSushi(t, repoRoot, "print-plan", cfgPath, capturePath)
+		if err != nil {
+			t.Fatalf("print-plan failed: %v\n%s", err, out)
+		}
+		if !strings.Contains(out, "selected source: remote") {
+			t.Fatalf("expected remote selection\n%s", out)
+		}
+		if !strings.Contains(out, "bundle digest:") {
+			t.Fatalf("expected bundle digest output\n%s", out)
+		}
+	})
+
+	t.Run("archive fails when source is not cookbooks directory", func(t *testing.T) {
+		notCookbooks := filepath.Join(t.TempDir(), "invalid")
+		if err := os.MkdirAll(notCookbooks, 0o755); err != nil {
+			t.Fatalf("mkdir invalid source: %v", err)
+		}
+
+		archivePath := filepath.Join(t.TempDir(), "cookbooks.tar.gz")
+		out, err := runSushiArchive(t, repoRoot, notCookbooks, archivePath, false)
+		if err == nil {
+			t.Fatalf("expected archive command failure\n%s", out)
+		}
+		want := "a cookbook directory could not be found at " + notCookbooks
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected failure message %q\n%s", want, out)
+		}
+	})
+
 	t.Run("fetch command", func(t *testing.T) {
 		caseItem := remoteCases(t)[0]
 		cacheDir := filepath.Join(t.TempDir(), "cache")
@@ -669,6 +723,18 @@ func runSushiWithEnv(t *testing.T, root, command, cfgPath, capturePath string, e
 	return string(out), err
 }
 
+func runSushiArchive(t *testing.T, root, sourcePath, outputPath string, checksum bool) (string, error) {
+	t.Helper()
+	args := []string{"run", "./cmd/sushi", "archive", sourcePath, "--output", outputPath}
+	if checksum {
+		args = append(args, "--checksum")
+	}
+	cmd := exec.Command("go", args...)
+	cmd.Dir = root
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
 func runSushiServiceBinary(t *testing.T, root, binaryPath, subcommand, cfgPath string) (string, error) {
 	t.Helper()
 	cmd := exec.Command(binaryPath, "service", subcommand, "-config", cfgPath)
@@ -729,6 +795,33 @@ func buildSushiBinary(t *testing.T, root string) string {
 		t.Fatalf("build sushi binary: %v\n%s", err, bytes)
 	}
 	return out
+}
+
+func copyDir(t *testing.T, src, dst string) {
+	t.Helper()
+	if err := filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dst, rel)
+		if info.IsDir() {
+			return os.MkdirAll(target, info.Mode())
+		}
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			return err
+		}
+		bytes, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(target, bytes, info.Mode())
+	}); err != nil {
+		t.Fatalf("copy dir %s -> %s: %v", src, dst, err)
+	}
 }
 
 func buildFakeClient(t *testing.T, root string) string {

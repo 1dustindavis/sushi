@@ -47,6 +47,8 @@ func main() {
 		exitOnErr(fetch(os.Args[2:]))
 	case "print-plan":
 		exitOnErr(printPlan(os.Args[2:]))
+	case "archive":
+		exitOnErr(archiveCommand(os.Args[2:]))
 	case "version":
 		printVersion()
 	case "service":
@@ -261,6 +263,65 @@ func printPlan(args []string) error {
 	return nil
 }
 
+func archiveCommand(args []string) error {
+	outputPath := ""
+	writeChecksum := false
+	positionals := make([]string, 0, 1)
+
+	for idx := 0; idx < len(args); idx++ {
+		arg := args[idx]
+		switch {
+		case arg == "--checksum":
+			writeChecksum = true
+		case arg == "--output" || arg == "-o":
+			if idx+1 >= len(args) {
+				return fmt.Errorf("missing value for %s", arg)
+			}
+			idx++
+			outputPath = args[idx]
+		case strings.HasPrefix(arg, "--output="):
+			outputPath = strings.TrimPrefix(arg, "--output=")
+		case strings.HasPrefix(arg, "-o="):
+			outputPath = strings.TrimPrefix(arg, "-o=")
+		case strings.HasPrefix(arg, "-"):
+			return fmt.Errorf("unknown archive flag: %s", arg)
+		default:
+			positionals = append(positionals, arg)
+		}
+	}
+
+	sourcePath := "."
+	if len(positionals) > 0 {
+		sourcePath = positionals[0]
+	}
+	if len(positionals) > 1 {
+		return fmt.Errorf("archive accepts at most one cookbook path argument")
+	}
+
+	if outputPath == "" {
+		outputPath = filepath.Join(".", "cookbooks.tar.gz")
+	}
+
+	checksumPath := ""
+	if writeChecksum {
+		checksumPath = outputPath + ".sha256"
+	}
+
+	result, err := source.CreateCookbookArchive(sourcePath, outputPath, checksumPath)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("archive source: %s\n", result.SourcePath)
+	fmt.Printf("archive output: %s\n", result.ArchivePath)
+	fmt.Printf("archive digest: %s\n", result.Digest)
+	if result.ChecksumPath != "" {
+		fmt.Printf("checksum output: %s\n", result.ChecksumPath)
+	}
+
+	return nil
+}
+
 func acquireExecutionLock(cfg *config.Config) (func(), error) {
 	if cfg.Execution.LockFile == "" {
 		return func() {}, nil
@@ -332,6 +393,7 @@ func printUsage() {
 	fmt.Println("  doctor      validate environment and config")
 	fmt.Println("  fetch       prefetch/verify/activate remote bundle")
 	fmt.Println("  print-plan  print source resolution decisions")
+	fmt.Println("  archive     create a remote-compatible cookbook archive")
 	fmt.Println("  version     print build version")
 	fmt.Println("  service     manage native Windows service operations (Windows only)")
 	fmt.Println("  help        print this usage information")
