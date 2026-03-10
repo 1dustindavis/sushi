@@ -82,7 +82,7 @@ jobs:
             --architecture amd64 \
             --description "Local-first chef-client/cinc-client wrapper" \
             --url "https://github.com/${GITHUB_REPOSITORY}" \
-            --license "Apache-2.0" \
+            --license "MIT" \
             --prefix / \
             -C dist/linux \
             usr/local/bin/sushi
@@ -93,7 +93,7 @@ jobs:
             --architecture x86_64 \
             --description "Local-first chef-client/cinc-client wrapper" \
             --url "https://github.com/${GITHUB_REPOSITORY}" \
-            --license "Apache-2.0" \
+            --license "MIT" \
             --prefix / \
             -C dist/linux \
             usr/local/bin/sushi
@@ -102,27 +102,22 @@ jobs:
           mv ./*.deb artifacts/
           mv ./*.rpm artifacts/
 
-      - name: Build and package macOS artifact
+      - name: Build and package macOS artifacts
         if: matrix.target.name == 'macos'
         env:
           VERSION: ${{ needs.determine-version.outputs.next_tag }}
         run: |
-          mkdir -p dist/macos/root/usr/local/bin
-
-          GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 \
-            go build -ldflags "-X main.version=${VERSION}" -o dist/macos/root/usr/local/bin/sushi ./cmd/sushi
-          chmod +x dist/macos/root/usr/local/bin/sushi
-
-          pkgbuild \
-            --root dist/macos/root \
-            --identifier com.github.${GITHUB_REPOSITORY_OWNER}.sushi \
-            --version "${VERSION}" \
-            --install-location / \
-            "dist/sushi-${VERSION}-darwin-arm64.pkg"
-
           mkdir -p artifacts
-          mv "dist/sushi-${VERSION}-darwin-arm64.pkg" artifacts/
 
+          for arch in arm64 amd64; do
+            root_dir="dist/macos/${arch}/root"
+            mkdir -p "${root_dir}/usr/local/bin"
+
+            GOOS=darwin GOARCH="$arch" CGO_ENABLED=0 go build -ldflags "-X main.version=${VERSION}" -o "${root_dir}/usr/local/bin/sushi" ./cmd/sushi
+            chmod +x "${root_dir}/usr/local/bin/sushi"
+
+            pkgbuild --root "${root_dir}" --identifier com.github.${GITHUB_REPOSITORY_OWNER}.sushi --version "${VERSION}" --install-location / "artifacts/sushi-${VERSION}-darwin-${arch}.pkg"
+          done
       - name: Build and package Windows artifact
         if: matrix.target.name == 'windows'
         shell: pwsh
