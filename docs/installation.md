@@ -13,19 +13,22 @@
 
 1. Build: `go build -o sushi ./cmd/sushi`
 2. Install binary in `/usr/local/bin`.
-3. Install config: `/Library/Application Support/sushi/config.json`.
-4. Logs default to `/Library/Logs/sushi/sushi.log`.
-5. Upgrade: replace the binary and keep config/cache directories.
-6. Uninstall: remove the binary, config directory, and optional cache/log directories.
+3. Preferred managed config: configuration profile at domain `com.github.1dustindavis.sushi` with key `Config` containing the full sushi JSON config string (stored under `/Library/Managed Preferences/`).
+4. Optional local defaults override: `defaults write com.github.1dustindavis.sushi Config -string "<json>"`.
+5. Fallback config path: `/Library/Application Support/sushi/config.json`.
+6. Logs default to `/Library/Logs/sushi/sushi.log`.
+7. Upgrade: replace the binary and keep config/cache directories.
+8. Uninstall: remove the binary, config directory, and optional cache/log directories.
 
 ## Windows
 
 1. Build: `go build -o sushi.exe ./cmd/sushi`
 2. Install binary in `C:\Program Files\sushi\sushi.exe`.
-3. Install config: `%ProgramData%\sushi\config.json`.
-4. Logs default to `%ProgramData%\sushi\logs\sushi.log`.
-5. Install service: `sushi.exe service install -config "%ProgramData%\sushi\config.json"`.
-6. Start service: `sushi.exe service start`.
+3. Preferred managed config: set `HKLM\SOFTWARE\com.github.1dustindavis.sushi\Config` (REG_SZ JSON string).
+4. Fallback config path: `%ProgramData%\sushi\config.json`.
+5. Logs default to `%ProgramData%\sushi\logs\sushi.log`.
+6. Install service: `sushi.exe service install` (or pass `-config` to pin an explicit path).
+7. Start service: `sushi.exe service start`.
 
 ### Windows service operations
 

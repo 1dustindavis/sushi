@@ -4,10 +4,10 @@ package main
 
 import "testing"
 
-func TestBuildWindowsServiceCreateArgs(t *testing.T) {
+func TestBuildWindowsServiceCreateArgsWithConfig(t *testing.T) {
 	exePath := `C:\\Program Files\\sushi\\sushi.exe`
 	configPath := `C:\\ProgramData\\sushi\\config.json`
-	args := buildWindowsServiceCreateArgs(exePath, configPath)
+	args := buildWindowsServiceCreateArgs(exePath, configPath, true)
 
 	want := []string{
 		"create",
@@ -19,6 +19,28 @@ func TestBuildWindowsServiceCreateArgs(t *testing.T) {
 		"DisplayName=",
 		"sushi",
 	}
+	assertServiceArgs(t, args, want)
+}
+
+func TestBuildWindowsServiceCreateArgsWithoutConfig(t *testing.T) {
+	exePath := `C:\\Program Files\\sushi\\sushi.exe`
+	args := buildWindowsServiceCreateArgs(exePath, "", false)
+
+	want := []string{
+		"create",
+		windowsServiceName,
+		"binPath=",
+		`"C:\\Program Files\\sushi\\sushi.exe" service run`,
+		"start=",
+		"auto",
+		"DisplayName=",
+		"sushi",
+	}
+	assertServiceArgs(t, args, want)
+}
+
+func assertServiceArgs(t *testing.T, args, want []string) {
+	t.Helper()
 	if len(args) != len(want) {
 		t.Fatalf("arg length mismatch: got %d want %d", len(args), len(want))
 	}
