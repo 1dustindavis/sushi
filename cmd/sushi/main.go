@@ -372,6 +372,14 @@ func loadConfig(args []string) (*config.Config, error) {
 	if err := config.Validate(cfg); err != nil {
 		return nil, err
 	}
+	if cfg.Sources.Remote.Enabled {
+		if _, err := os.Stat(cfg.Sources.Remote.CacheDir); os.IsNotExist(err) {
+			logger.Warn("remote cache directory missing; creating", "path", cfg.Sources.Remote.CacheDir)
+		}
+		if err := os.MkdirAll(cfg.Sources.Remote.CacheDir, 0o755); err != nil {
+			return nil, fmt.Errorf("create remote cache directory %q: %w", cfg.Sources.Remote.CacheDir, err)
+		}
+	}
 	return cfg, nil
 }
 
@@ -454,13 +462,38 @@ func mapExitCode(err error) int {
 	}
 }
 
+type appendFileWriter struct {
+	path string
+}
+
+func (w appendFileWriter) Write(p []byte) (int, error) {
+	file, err := os.OpenFile(w.path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return 0, err
+	}
+	defer file.Close()
+	return file.Write(p)
+}
+
 func newLogger() *slog.Logger {
 	writers := []io.Writer{os.Stderr}
 	logPath := config.DefaultLogPath()
-	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err == nil {
-		if file, openErr := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644); openErr == nil {
-			writers = append(writers, file)
+	logDir := filepath.Dir(logPath)
+	if _, err := os.Stat(logDir); os.IsNotExist(err) {
+		fmt.Fprintf(os.Stderr, "warning: log directory missing; creating %s\n", logDir)
+	}
+	if err := os.MkdirAll(logDir, 0o755); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: unable to create log directory %s: %v\n", logDir, err)
+	} else {
+		if _, err := os.Stat(logPath); os.IsNotExist(err) {
+			fmt.Fprintf(os.Stderr, "warning: log file missing; creating %s\n", logPath)
+			if file, openErr := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644); openErr == nil {
+				_ = file.Close()
+			} else {
+				fmt.Fprintf(os.Stderr, "warning: unable to create log file %s: %v\n", logPath, openErr)
+			}
 		}
+		writers = append(writers, appendFileWriter{path: logPath})
 	}
 	return logging.MustNewDefault(io.MultiWriter(writers...))
 }
