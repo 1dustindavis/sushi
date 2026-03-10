@@ -12,19 +12,16 @@ permissions:
   contents: write
 
 jobs:
-  build-release:
+  determine-version:
     runs-on: ubuntu-latest
+    outputs:
+      next_tag: ${{ steps.next_version.outputs.next_tag }}
 
     steps:
       - name: Checkout pushed commit
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
 
       - name: Determine next version
         id: next_version
@@ -40,34 +37,187 @@ jobs:
 
           echo "next_tag=$next_tag" >> "$GITHUB_OUTPUT"
 
-      - name: Build release artifacts
+  build-packages:
+    name: Build ${{ matrix.target.name }} artifacts
+    needs: determine-version
+    runs-on: ${{ matrix.target.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - name: linux
+            runner: ubuntu-latest
+          - name: macos
+            runner: macos-latest
+          - name: windows
+            runner: windows-latest
+
+    steps:
+      - name: Checkout pushed commit
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build and package Linux artifacts
+        if: matrix.target.name == 'linux'
+        env:
+          VERSION: ${{ needs.determine-version.outputs.next_tag }}
         run: |
-          mkdir -p dist
+          mkdir -p dist/linux/usr/local/bin
 
-          version="${{ steps.next_version.outputs.next_tag }}"
+          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 \
+            go build -ldflags "-X main.version=${VERSION}" -o dist/linux/usr/local/bin/sushi ./cmd/sushi
+          chmod +x dist/linux/usr/local/bin/sushi
 
-          for target in linux/amd64 darwin/amd64 darwin/arm64 windows/amd64; do
-            IFS='/' read -r goos goarch <<< "$target"
-            output="sushi-${version}-${goos}-${goarch}"
-            if [ "$goos" = "windows" ]; then
-              output="${output}.exe"
-            fi
+          sudo apt-get update
+          sudo apt-get install -y rpm ruby ruby-dev build-essential
+          sudo gem install --no-document fpm
 
-            GOOS="$goos" GOARCH="$goarch" CGO_ENABLED=0 \
-              go build -ldflags "-X main.version=${version}" -o "dist/${output}" ./cmd/sushi
-          done
+          fpm -s dir -t deb \
+            -n sushi \
+            -v "${VERSION}" \
+            --architecture amd64 \
+            --description "Local-first chef-client/cinc-client wrapper" \
+            --url "https://github.com/${GITHUB_REPOSITORY}" \
+            --license "Apache-2.0" \
+            --prefix / \
+            -C dist/linux \
+            usr/local/bin/sushi
+
+          fpm -s dir -t rpm \
+            -n sushi \
+            -v "${VERSION}" \
+            --architecture x86_64 \
+            --description "Local-first chef-client/cinc-client wrapper" \
+            --url "https://github.com/${GITHUB_REPOSITORY}" \
+            --license "Apache-2.0" \
+            --prefix / \
+            -C dist/linux \
+            usr/local/bin/sushi
+
+          mkdir -p artifacts
+          mv ./*.deb artifacts/
+          mv ./*.rpm artifacts/
+
+      - name: Build and package macOS artifact
+        if: matrix.target.name == 'macos'
+        env:
+          VERSION: ${{ needs.determine-version.outputs.next_tag }}
+        run: |
+          mkdir -p dist/macos/root/usr/local/bin
+
+          GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 \
+            go build -ldflags "-X main.version=${VERSION}" -o dist/macos/root/usr/local/bin/sushi ./cmd/sushi
+          chmod +x dist/macos/root/usr/local/bin/sushi
+
+          pkgbuild \
+            --root dist/macos/root \
+            --identifier com.github.${GITHUB_REPOSITORY_OWNER}.sushi \
+            --version "${VERSION}" \
+            --install-location / \
+            "dist/sushi-${VERSION}-darwin-arm64.pkg"
+
+          mkdir -p artifacts
+          mv "dist/sushi-${VERSION}-darwin-arm64.pkg" artifacts/
+
+      - name: Build and package Windows artifact
+        if: matrix.target.name == 'windows'
+        shell: pwsh
+        env:
+          VERSION: ${{ needs.determine-version.outputs.next_tag }}
+        run: |
+          New-Item -ItemType Directory -Path dist/windows -Force | Out-Null
+          $binaryPath = "dist/windows/sushi.exe"
+
+          $env:GOOS = "windows"
+          $env:GOARCH = "amd64"
+          $env:CGO_ENABLED = "0"
+          go build -ldflags "-X main.version=$env:VERSION" -o $binaryPath ./cmd/sushi
+
+          dotnet tool install --global wix --version 4.*
+          $env:PATH += ";$env:USERPROFILE\.dotnet\tools"
+
+          $wxs = @"
+          <?xml version="1.0" encoding="UTF-8"?>
+          <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+            <Package Name="Sushi" Manufacturer="sushi" Version="$env:VERSION" UpgradeCode="78ff6ef3-f506-4395-a94a-400a778c2055" Scope="perMachine" Language="1033">
+              <MajorUpgrade DowngradeErrorMessage="A newer version of Sushi is already installed." />
+              <MediaTemplate EmbedCab="yes" />
+
+              <Feature Id="MainFeature" Title="Sushi" Level="1">
+                <ComponentRef Id="SushiBinaryComponent" />
+              </Feature>
+
+              <StandardDirectory Id="ProgramFiles64Folder">
+                <Directory Id="INSTALLFOLDER" Name="Sushi">
+                  <Component Id="SushiBinaryComponent" Guid="a2924308-ee8e-4def-ac0e-36ef2dafb1f3">
+                    <File Id="SushiExe" Source="dist/windows/sushi.exe" KeyPath="yes" />
+                    <ServiceInstall
+                      Id="SushiServiceInstall"
+                      Name="sushi"
+                      DisplayName="Sushi"
+                      Description="Sushi service"
+                      Start="auto"
+                      Type="ownProcess"
+                      ErrorControl="normal"
+                      Vital="yes" />
+                    <ServiceControl
+                      Id="SushiServiceControl"
+                      Name="sushi"
+                      Start="install"
+                      Stop="both"
+                      Remove="uninstall"
+                      Wait="yes" />
+                  </Component>
+                </Directory>
+              </StandardDirectory>
+            </Package>
+          </Wix>
+          "@
+
+          Set-Content -Path dist/windows/sushi.wxs -Value $wxs
+
+          wix build dist/windows/sushi.wxs -arch x64 -o "dist/sushi-$env:VERSION-windows-amd64.msi"
+
+          New-Item -ItemType Directory -Path artifacts -Force | Out-Null
+          Move-Item "dist/sushi-$env:VERSION-windows-amd64.msi" artifacts/
+
+      - name: Upload packaged artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target.name }}-packages
+          path: artifacts/*
+          if-no-files-found: error
+
+  create-release:
+    runs-on: ubuntu-latest
+    needs:
+      - determine-version
+      - build-packages
+
+    steps:
+      - name: Checkout pushed commit
+        uses: actions/checkout@v4
+
+      - name: Download packaged artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
 
       - name: Create and push tag
         run: |
-          git tag "${{ steps.next_version.outputs.next_tag }}"
-          git push origin "${{ steps.next_version.outputs.next_tag }}"
+          git tag "${{ needs.determine-version.outputs.next_tag }}"
+          git push origin "${{ needs.determine-version.outputs.next_tag }}"
 
       - name: Create pre-release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.next_version.outputs.next_tag }}
-          name: ${{ steps.next_version.outputs.next_tag }}
+          tag_name: ${{ needs.determine-version.outputs.next_tag }}
+          name: ${{ needs.determine-version.outputs.next_tag }}
           prerelease: true
           generate_release_notes: true
           files: |
-            dist/*
+            dist/**/*
