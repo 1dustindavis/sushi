@@ -146,4 +146,5 @@ Missing-path behavior:
 
 - If no config is available at the resolved path, commands fail with a config error (exit code `10`).
 - If the configured/default log directory or log file does not exist, sushi emits a warning and attempts to create it.
+- Logs are rotated at approximately 10 MiB per active file, keeping up to 5 rotated copies (`sushi.log.1`..`sushi.log.5`); older rotated files are purged automatically.
 - If `sources.remote.cache_dir` does not exist for an enabled remote source, sushi emits a warning and creates it before source resolution.

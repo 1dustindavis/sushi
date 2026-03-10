@@ -462,6 +462,11 @@ func mapExitCode(err error) int {
 	}
 }
 
+const (
+	defaultLogMaxBytes   = 10 * 1024 * 1024
+	defaultLogMaxBackups = 5
+)
+
 func newLogger() *slog.Logger {
 	writers := []io.Writer{os.Stderr}
 	logPath := config.DefaultLogPath()
@@ -469,19 +474,14 @@ func newLogger() *slog.Logger {
 	if _, err := os.Stat(logDir); os.IsNotExist(err) {
 		fmt.Fprintf(os.Stderr, "warning: log directory missing; creating %s\n", logDir)
 	}
-	if err := os.MkdirAll(logDir, 0o755); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: unable to create log directory %s: %v\n", logDir, err)
-	} else {
-		if _, err := os.Stat(logPath); os.IsNotExist(err) {
-			fmt.Fprintf(os.Stderr, "warning: log file missing; creating %s\n", logPath)
-		}
-		if file, openErr := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644); openErr == nil {
-			writers = append(writers, file)
-		} else {
-			fmt.Fprintf(os.Stderr, "warning: unable to open log file %s: %v\n", logPath, openErr)
-		}
+	if _, err := os.Stat(logPath); os.IsNotExist(err) {
+		fmt.Fprintf(os.Stderr, "warning: log file missing; creating %s\n", logPath)
 	}
-	configured := logging.MustNewDefault(io.MultiWriter(writers...))
-	slog.SetDefault(configured)
-	return configured
+	fileWriter, err := logging.NewRotatingFileWriter(logPath, defaultLogMaxBytes, defaultLogMaxBackups)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: unable to initialize log file %s: %v\n", logPath, err)
+	} else {
+		writers = append(writers, fileWriter)
+	}
+	return logging.MustNewDefault(io.MultiWriter(writers...))
 }
