@@ -141,3 +141,9 @@ Environment overrides:
 
 - `SUSHI_CONFIG_PATH`
 - `SUSHI_LOG_PATH`
+
+Missing-path behavior:
+
+- If no config is available at the resolved path, commands fail with a config error (exit code `10`).
+- If the configured/default log directory or log file does not exist, sushi emits a warning and attempts to create it.
+- If `sources.remote.cache_dir` does not exist for an enabled remote source, sushi emits a warning and creates it before source resolution.

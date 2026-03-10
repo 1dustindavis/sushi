@@ -377,6 +377,17 @@ func TestIntegration(t *testing.T) {
 	})
 
 	t.Run("exit codes", func(t *testing.T) {
+		t.Run("missing default config", func(t *testing.T) {
+			missingPath := filepath.Join(t.TempDir(), "missing-config.json")
+			out, exitCode := runSushiWithoutConfigExitCode(t, repoRoot, "print-plan", []string{"SUSHI_CONFIG_PATH=" + missingPath})
+			if exitCode != 10 {
+				t.Fatalf("expected exit code 10, got %d\n%s", exitCode, out)
+			}
+			if !strings.Contains(out, "read config") {
+				t.Fatalf("expected missing config read error\n%s", out)
+			}
+		})
+
 		t.Run("config invalid", func(t *testing.T) {
 			badCfg := filepath.Join(t.TempDir(), "bad.json")
 			if err := os.WriteFile(badCfg, []byte("{not-json"), 0o644); err != nil {
@@ -444,6 +455,37 @@ func TestIntegration(t *testing.T) {
 				t.Fatalf("expected exit code 13, got %d", exitCode)
 			}
 		})
+	})
+
+	t.Run("creates missing log path and cache directory", func(t *testing.T) {
+		logPath := filepath.Join(t.TempDir(), "missing", "logs", "sushi.log")
+		cacheDir := filepath.Join(t.TempDir(), "missing", "cache")
+		caseItem := remoteCases(t)[0]
+		cfgPath := writeRemoteConfig(t, fakeClient, caseItem.sourceURL, caseItem.checksumURL, cacheDir, true, true, "")
+
+		out, err := runSushiWithEnv(t, repoRoot, "fetch", cfgPath, capturePath, []string{"SUSHI_LOG_PATH=" + logPath})
+		if err != nil {
+			t.Fatalf("fetch failed: %v\n%s", err, out)
+		}
+
+		if !strings.Contains(out, "log directory missing; creating") {
+			t.Fatalf("expected log directory creation warning\n%s", out)
+		}
+		if !strings.Contains(out, "log file missing; creating") {
+			t.Fatalf("expected log file creation warning\n%s", out)
+		}
+		if !strings.Contains(out, "remote cache directory missing; creating") {
+			t.Fatalf("expected cache directory creation warning\n%s", out)
+		}
+
+		if _, statErr := os.Stat(logPath); statErr != nil {
+			t.Fatalf("expected log file to exist: %v", statErr)
+		}
+		if info, statErr := os.Stat(cacheDir); statErr != nil {
+			t.Fatalf("expected cache dir to exist: %v", statErr)
+		} else if !info.IsDir() {
+			t.Fatalf("expected cache path to be directory")
+		}
 	})
 
 	t.Run("chef_server", func(t *testing.T) {
@@ -772,6 +814,31 @@ func runSushiExitCode(t *testing.T, root, command, cfgPath, capturePath string, 
 	}
 	t.Fatalf("unexpected command error type: %v", err)
 	return out, -1
+}
+
+func runSushiWithoutConfigExitCode(t *testing.T, root, command string, extraEnv []string) (string, int) {
+	t.Helper()
+	cmd := exec.Command("go", "run", "./cmd/sushi", command)
+	cmd.Dir = root
+	cmd.Env = append(os.Environ(), extraEnv...)
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		return string(out), 0
+	}
+	if idx := strings.LastIndex(string(out), "exit status "); idx >= 0 {
+		value := strings.TrimSpace(string(out)[idx+len("exit status "):])
+		if fields := strings.Fields(value); len(fields) > 0 {
+			if code, convErr := strconv.Atoi(fields[0]); convErr == nil {
+				return string(out), code
+			}
+		}
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return string(out), exitErr.ExitCode()
+	}
+	t.Fatalf("unexpected command error type: %v", err)
+	return string(out), -1
 }
 
 func repoRoot(t *testing.T) string {
