@@ -87,6 +87,10 @@ jobs:
             -C dist/linux \
             usr/local/bin/sushi
 
+          for deb in ./*.deb; do
+            mv "$deb" "${deb/amd64/x86_64}"
+          done
+
           fpm -s dir -t rpm \
             -n sushi \
             -v "${VERSION}" \
@@ -109,14 +113,19 @@ jobs:
         run: |
           mkdir -p artifacts
 
-          for arch in arm64 amd64; do
-            root_dir="dist/macos/${arch}/root"
+          for goarch in arm64 amd64; do
+            filename_arch="$goarch"
+            if [ "$goarch" = "amd64" ]; then
+              filename_arch="x86_64"
+            fi
+
+            root_dir="dist/macos/${goarch}/root"
             mkdir -p "${root_dir}/usr/local/bin"
 
-            GOOS=darwin GOARCH="$arch" CGO_ENABLED=0 go build -ldflags "-X main.version=${VERSION}" -o "${root_dir}/usr/local/bin/sushi" ./cmd/sushi
+            GOOS=darwin GOARCH="$goarch" CGO_ENABLED=0 go build -ldflags "-X main.version=${VERSION}" -o "${root_dir}/usr/local/bin/sushi" ./cmd/sushi
             chmod +x "${root_dir}/usr/local/bin/sushi"
 
-            pkgbuild --root "${root_dir}" --identifier com.github.${GITHUB_REPOSITORY_OWNER}.sushi --version "${VERSION}" --install-location / "artifacts/sushi-${VERSION}-darwin-${arch}.pkg"
+            pkgbuild --root "${root_dir}" --identifier com.github.${GITHUB_REPOSITORY_OWNER}.sushi --version "${VERSION}" --install-location / "artifacts/sushi-${VERSION}-darwin-${filename_arch}.pkg"
           done
       - name: Build and package Windows artifact
         if: matrix.target.name == 'windows'
@@ -175,10 +184,10 @@ jobs:
 
           Set-Content -Path dist/windows/sushi.wxs -Value $wxs
 
-          wix build dist/windows/sushi.wxs -arch x64 -o "dist/sushi-$env:VERSION-windows-amd64.msi"
+          wix build dist/windows/sushi.wxs -arch x64 -o "dist/sushi-$env:VERSION-windows-x86_64.msi"
 
           New-Item -ItemType Directory -Path artifacts -Force | Out-Null
-          Move-Item "dist/sushi-$env:VERSION-windows-amd64.msi" artifacts/
+          Move-Item "dist/sushi-$env:VERSION-windows-x86_64.msi" artifacts/
 
       - name: Upload packaged artifacts
         uses: actions/upload-artifact@v4
