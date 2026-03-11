@@ -23,4 +23,5 @@ A sample configuration is available at [`examples/config.json`](examples/config.
 - Command reference: [`docs/command-reference.md`](docs/command-reference.md)
 - Exit-code reference: [`docs/exit-code-reference.md`](docs/exit-code-reference.md)
 - Runbook + troubleshooting: [`docs/operations/runbook.md`](docs/operations/runbook.md)
+- Release notes (current capabilities): [`docs/release-notes.md`](docs/release-notes.md)
 - Service examples: [`examples/services/`](examples/services)
